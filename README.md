@@ -75,10 +75,11 @@ Gitea webhook
 Codex is the default reviewer. Claude Code and MiniMax-compatible reviewers are
 optional and keep their own reviewer identity, sessions, logs, and PR comments.
 
-Codex authentication defaults to `ccswitch`. Configure a Codex provider/account
-with cc-switch, then choose the provider, base URL, model, and reasoning effort
-in `/admin`. The console reads candidates from `/cc-switch/cc-switch.db`,
-including provider-level Codex config such as:
+Codex authentication defaults to `ccswitch`. The `/admin` console is the primary
+configuration surface: set the Codex Base URL, API Key, model, and reasoning
+effort there. A cc-switch provider id is optional; use it only when you already
+have a provider you want to pin. The console can also read candidates from
+`/cc-switch/cc-switch.db`, including provider-level Codex config such as:
 
 ```toml
 model = "gpt-5.5"
@@ -88,16 +89,17 @@ model_reasoning_effort = "xhigh"
 base_url = "https://relay.example.com/v1"
 ```
 
-When a base URL, model, or reasoning effort is saved in the console, the runner
-passes it to Codex as an explicit override for each review. A Codex base URL is
-applied through Codex's custom `model_provider` config. The app default
-reasoning effort is `high` for review depth; clear the field in `/admin` if you
-want the selected cc-switch provider's own default instead.
+In `ccswitch` mode, if a provider id is selected, the runner switches to that
+provider and syncs its Codex config into the runtime `CODEX_HOME`. If the
+provider field is empty, the runner first tries to match the console Base URL
+to an existing cc-switch provider; when none matches, it builds the Codex
+runtime config directly from the console Base URL. The app default reasoning
+effort is `high` for review depth.
 
 If model candidates are empty in `/admin`, fetch them once with cc-switch:
 
 ```bash
-cc-switch --app codex provider fetch-models <provider-id>
+cc-switch --app codex provider fetch-models --base-url https://relay.example.com/v1 <provider-id>
 ```
 
 MiniMax-compatible review runs through the Claude Code execution path. There are
@@ -155,20 +157,22 @@ Persist these paths in production:
 
 | Mode | Cost | Setup |
 |------|------|-------|
-| `ccswitch` (default) | depends on the selected cc-switch provider/account | configure a Codex provider/account in cc-switch, then set `CODEX_CC_SWITCH_PROVIDER_ID` or save `codex_cc_switch_provider_id` in `/admin` |
+| `ccswitch` (default) | depends on the configured relay/account | set Codex Base URL + API Key in `/admin`; optionally set `CODEX_CC_SWITCH_PROVIDER_ID` or save `codex_cc_switch_provider_id` to pin an existing cc-switch provider |
 | `authfile` (legacy) | reuses your ChatGPT subscription, **no extra API billing** | run `codex login` locally and place `~/.codex/auth.json` in `/codex-home` |
 | `apikey` | **separately billed** OpenAI Platform tokens | set `CODEX_API_KEY` + `CODEX_AUTH_MODE=apikey` |
 
 In `ccswitch` mode the `/cc-switch` volume **must be writable** so cc-switch can
 store providers, accounts, proxy state, and Codex live config. `CODEX_CC_SWITCH_PROVIDER_ID`
 is optional; when it is set, the runner switches to that Codex provider before
-each review. The admin console reads Codex providers, model ids, and
-`model_reasoning_effort` values from `cc-switch.db`; saved console values are
-then passed to Codex as explicit overrides.
+each review. When it is empty, the runner uses the console Base URL as the
+source of truth and does not require an existing provider. The admin console
+reads Codex providers, model ids, and `model_reasoning_effort` values from
+`cc-switch.db`; saved model/reasoning values are then passed to Codex as
+explicit overrides.
 
 ## First-run checklist
 
-1. **Codex provider**: configure Codex in cc-switch, then set the provider id in `/admin` or `CODEX_CC_SWITCH_PROVIDER_ID`.
+1. **Codex**: in `/admin`, set `Codex Auth Mode=ccswitch`, Codex Base URL, API Key, model, and reasoning effort. Leave provider blank unless you intentionally want to pin an existing cc-switch provider.
 2. **Gitea bot**: a Gitea user with a token scoped **repo read + PR write**; add it to private repos.
 3. **Console password**: set `ADMIN_PASSWORD` (no password ⇒ `/admin` returns 503).
 4. **Console config** (`/admin`): Gitea URL, bot token, webhook secret, Codex

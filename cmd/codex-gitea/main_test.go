@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"github.com/turning4th/codex-gitea/internal/console"
 	"github.com/turning4th/codex-gitea/internal/model"
 	"github.com/turning4th/codex-gitea/internal/store"
+	_ "modernc.org/sqlite"
 )
 
 func newReadyzTestStore(t *testing.T) *store.Store {
@@ -25,6 +27,33 @@ func newReadyzTestStore(t *testing.T) *store.Store {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	return st
+}
+
+func seedCodexProviderDB(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir cc-switch dir: %v", err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "cc-switch.db"))
+	if err != nil {
+		t.Fatalf("open cc-switch db: %v", err)
+	}
+	defer db.Close()
+	_, err = db.Exec(`
+CREATE TABLE providers (
+  id TEXT NOT NULL,
+  app_type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  settings_config TEXT NOT NULL,
+  is_current BOOLEAN NOT NULL DEFAULT 0,
+  PRIMARY KEY (id, app_type)
+);
+INSERT INTO providers (id, app_type, name, settings_config, is_current)
+VALUES ('codex-relay', 'codex', 'Relay', '{"base_url":"https://llm.1sir.cc/v1"}', 1);
+`)
+	if err != nil {
+		t.Fatalf("seed cc-switch db: %v", err)
+	}
 }
 
 func readyzTestConfig() *config.Config {
@@ -154,14 +183,18 @@ exit 1
 	t.Setenv("CODEX_BIN", binPath)
 	t.Setenv("CODEX_STUB_LOG", logPath)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ccSwitchDir := t.TempDir()
+	seedCodexProviderDB(t, ccSwitchDir)
 
 	cfg := &config.Config{
-		CodexAuthMode: config.AuthModeCCSwitch,
-		CodexSandbox:  config.SandboxDangerFullAccess,
-		CodexBaseURL:  "https://llm.1sir.cc",
-		CodexAPIKey:   "sk-from-settings",
-		Timeout:       time.Minute,
-		GiteaTimeout:  time.Minute,
+		CodexAuthMode:     config.AuthModeCCSwitch,
+		CodexHome:         t.TempDir(),
+		CodexSandbox:      config.SandboxDangerFullAccess,
+		CodexBaseURL:      "https://llm.1sir.cc",
+		CodexAPIKey:       "sk-from-settings",
+		CCSwitchConfigDir: ccSwitchDir,
+		Timeout:           time.Minute,
+		GiteaTimeout:      time.Minute,
 	}
 	if _, err := runChatProbe(context.Background(), cfg, console.ChatProbeInput{Reviewer: "codex", Prompt: "Return OK"}); err != nil {
 		t.Fatalf("runChatProbe: %v", err)
@@ -178,14 +211,13 @@ exit 1
 		t.Fatalf("probe inherited danger-full-access sandbox:\n%s", log)
 	}
 	for _, want := range []string{
-		"CODEX_API_KEY=\n",
+		"CODEX_API_KEY=sk-from-settings",
 	} {
 		if !strings.Contains(log, want) {
-			t.Fatalf("probe should leave direct API key unset in ccswitch mode, missing %q:\n%s", want, log)
+			t.Fatalf("probe should pass configured API key to Codex, missing %q:\n%s", want, log)
 		}
 	}
 	for _, unwanted := range []string{
-		"CODEX_API_KEY=sk-from-settings",
 		"model_provider=\"codex_gitea\"",
 		"model_providers.codex_gitea.base_url=",
 		"model_providers.codex_gitea.env_key=",

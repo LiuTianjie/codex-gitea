@@ -146,6 +146,7 @@ func main() {
 				BaseURL:            codexBaseURLForDirectMode(snap),
 				APIKey:             codexAPIKeyForMode(snap),
 				CCSwitchConfigDir:  snap.CCSwitchConfigDir,
+				CCSwitchBaseURL:    snap.CodexBaseURL,
 				UseCCSwitch:        snap.CodexAuthMode == config.AuthModeCCSwitch,
 				CCSwitchProviderID: codexProviderForMode(snap),
 				SandboxMode:        snap.CodexSandbox,
@@ -202,6 +203,7 @@ func buildReviewers(cfg *config.Config) []model.Reviewer {
 		BaseURL:            codexBaseURLForDirectMode(cfg),
 		APIKey:             codexAPIKeyForMode(cfg),
 		CCSwitchConfigDir:  cfg.CCSwitchConfigDir,
+		CCSwitchBaseURL:    cfg.CodexBaseURL,
 		UseCCSwitch:        cfg.CodexAuthMode == config.AuthModeCCSwitch,
 		CCSwitchProviderID: codexProviderForMode(cfg),
 		SandboxMode:        cfg.CodexSandbox,
@@ -260,6 +262,7 @@ func runChatProbe(ctx context.Context, cfg *config.Config, in console.ChatProbeI
 			BaseURL:            baseURL,
 			APIKey:             codexAPIKeyForMode(cfg),
 			CCSwitchConfigDir:  cfg.CCSwitchConfigDir,
+			CCSwitchBaseURL:    firstNonEmpty(in.BaseURL, cfg.CodexBaseURL),
 			UseCCSwitch:        cfg.CodexAuthMode == config.AuthModeCCSwitch,
 			CCSwitchProviderID: providerID,
 			SandboxMode:        config.SandboxReadOnly,
@@ -309,7 +312,7 @@ func codexAPIKeyForMode(cfg *config.Config) string {
 	if cfg == nil {
 		return ""
 	}
-	if cfg.CodexAuthMode == config.AuthModeAPIKey {
+	if cfg.CodexAuthMode == config.AuthModeAPIKey || cfg.CodexAuthMode == config.AuthModeCCSwitch {
 		return cfg.CodexAPIKey
 	}
 	return ""

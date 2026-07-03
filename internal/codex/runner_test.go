@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -119,6 +120,33 @@ exit 1
 	return script
 }
 
+func seedCCSwitchCodexProvider(t *testing.T, dir, id, baseURL string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir cc-switch dir: %v", err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "cc-switch.db"))
+	if err != nil {
+		t.Fatalf("open cc-switch db: %v", err)
+	}
+	defer db.Close()
+	_, err = db.Exec(`
+CREATE TABLE providers (
+  id TEXT NOT NULL,
+  app_type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  settings_config TEXT NOT NULL,
+  is_current BOOLEAN NOT NULL DEFAULT 0,
+  PRIMARY KEY (id, app_type)
+);
+INSERT INTO providers (id, app_type, name, settings_config, is_current)
+VALUES (?, 'codex', 'Relay', ?, 1);
+`, id, `{"base_url":"`+baseURL+`"}`)
+	if err != nil {
+		t.Fatalf("seed cc-switch db: %v", err)
+	}
+}
+
 func TestRunner_ReviewNew(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "stub.log")
 	writeStub(t, logPath)
@@ -216,6 +244,7 @@ func TestRunner_ReviewSwitchesCodexProvider(t *testing.T) {
 	writeStub(t, logPath)
 	ccSwitchBin := writeCCSwitchStub(t, logPath)
 	ccSwitchDir := t.TempDir()
+	seedCCSwitchCodexProvider(t, ccSwitchDir, "codex-relay", "https://codex-relay.example.com/v1")
 	codexHome := t.TempDir()
 	if err := os.WriteFile(filepath.Join(codexHome, "auth.json"), []byte(`{"tokens":{"refresh_token":"legacy"}}`), 0o600); err != nil {
 		t.Fatalf("write legacy auth.json: %v", err)
@@ -272,17 +301,27 @@ func TestRunner_ReviewSwitchesCodexProvider(t *testing.T) {
 	if linkTarget != filepath.Join(codexHome, "ccswitch-runtime") {
 		t.Fatalf("cc-switch .codex link = %q, want runtime home", linkTarget)
 	}
+	configData, err := os.ReadFile(filepath.Join(codexHome, "ccswitch-runtime", "config.toml"))
+	if err != nil {
+		t.Fatalf("runtime config.toml missing: %v", err)
+	}
+	if !strings.Contains(string(configData), `base_url = "https://codex-relay.example.com/v1"`) {
+		t.Fatalf("runtime config.toml missing cc-switch base_url:\n%s", configData)
+	}
 }
 
 func TestRunner_ReviewSwitchesCurrentCodexProviderWhenProviderIDEmpty(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "stub.log")
 	writeStub(t, logPath)
 	ccSwitchBin := writeCCSwitchStub(t, logPath)
+	ccSwitchDir := t.TempDir()
+	seedCCSwitchCodexProvider(t, ccSwitchDir, "codex-relay", "https://codex-relay.example.com/v1")
 
 	r := New(Options{
-		CodexHome:   t.TempDir(),
-		CCSwitchBin: ccSwitchBin,
-		UseCCSwitch: true,
+		CodexHome:         t.TempDir(),
+		CCSwitchBin:       ccSwitchBin,
+		CCSwitchConfigDir: ccSwitchDir,
+		UseCCSwitch:       true,
 	})
 
 	if _, err := r.Review(context.Background(), model.CodexInput{
@@ -312,6 +351,50 @@ func TestRunner_ReviewSwitchesCurrentCodexProviderWhenProviderIDEmpty(t *testing
 	}
 	if strings.Index(log, "CCARG[3]=switch") > strings.Index(log, "ARG[0]=exec") {
 		t.Fatalf("cc-switch provider switch must run before codex exec:\n%s", log)
+	}
+}
+
+func TestRunner_ReviewUsesConsoleBaseURLWhenProviderIDEmpty(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "stub.log")
+	writeStub(t, logPath)
+	ccSwitchBin := writeCCSwitchStub(t, logPath)
+	ccSwitchDir := t.TempDir()
+	seedCCSwitchCodexProvider(t, ccSwitchDir, "default", "")
+	codexHome := t.TempDir()
+
+	r := New(Options{
+		CodexHome:         codexHome,
+		CCSwitchBin:       ccSwitchBin,
+		CCSwitchConfigDir: ccSwitchDir,
+		CCSwitchBaseURL:   "https://llm.1sir.cc/v1",
+		UseCCSwitch:       true,
+		APIKey:            "sk-console",
+	})
+
+	if _, err := r.Review(context.Background(), model.CodexInput{
+		Worktree: t.TempDir(),
+		BaseRef:  "main",
+	}); err != nil {
+		t.Fatalf("Review: %v", err)
+	}
+
+	logb, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read stub log: %v", err)
+	}
+	log := string(logb)
+	if strings.Contains(log, "CCARG[3]=current") || strings.Contains(log, "CCARG[3]=switch") {
+		t.Fatalf("provider-empty console base URL path should not fall back to default provider:\n%s", log)
+	}
+	if !strings.Contains(log, "CODEX_API_KEY=sk-console") {
+		t.Fatalf("console API key missing from codex env:\n%s", log)
+	}
+	configData, err := os.ReadFile(filepath.Join(codexHome, "ccswitch-runtime", "config.toml"))
+	if err != nil {
+		t.Fatalf("runtime config.toml missing: %v", err)
+	}
+	if !strings.Contains(string(configData), `base_url = "https://llm.1sir.cc/v1"`) {
+		t.Fatalf("runtime config.toml missing console base_url:\n%s", configData)
 	}
 }
 

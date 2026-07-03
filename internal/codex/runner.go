@@ -3,6 +3,7 @@ package codex
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/turning4th/codex-gitea/internal/model"
+	_ "modernc.org/sqlite"
 )
 
 // defaultTimeout bounds a single codex invocation when none is configured.
@@ -58,6 +60,8 @@ type Options struct {
 	CCSwitchBin string
 	// CCSwitchConfigDir sets CC_SWITCH_CONFIG_DIR for cc-switch calls.
 	CCSwitchConfigDir string
+	// CCSwitchBaseURL optionally selects or builds a Codex runtime provider in ccswitch mode.
+	CCSwitchBaseURL string
 	// UseCCSwitch reports status through cc-switch even without a forced provider id.
 	UseCCSwitch bool
 	// CCSwitchProviderID, when set, is switched before each codex invocation.
@@ -78,6 +82,7 @@ type Runner struct {
 	apiKey      string
 	ccBin       string
 	ccDir       string
+	ccBaseURL   string
 	useCCSwitch bool
 	ccProvider  string
 	sandbox     string
@@ -118,6 +123,7 @@ func New(opts Options) *Runner {
 		apiKey:      opts.APIKey,
 		ccBin:       ccBin,
 		ccDir:       opts.CCSwitchConfigDir,
+		ccBaseURL:   normalizeOpenAIBaseURL(opts.CCSwitchBaseURL),
 		useCCSwitch: opts.UseCCSwitch,
 		ccProvider:  strings.TrimSpace(opts.CCSwitchProviderID),
 		sandbox:     sandbox,
@@ -459,26 +465,74 @@ func (r *Runner) ccSwitchStatus(ctx context.Context) (string, error) {
 	return status, nil
 }
 
-func (r *Runner) applyProvider(ctx context.Context) error {
+func (r *Runner) applyProvider(ctx context.Context) (string, error) {
 	providerID := strings.TrimSpace(r.ccProvider)
+	if providerID == "" && r.useCCSwitch && strings.TrimSpace(r.ccBaseURL) != "" {
+		resolvedID, err := r.resolveCCSwitchProviderByBaseURL(ctx, r.ccBaseURL)
+		if err != nil {
+			return "", err
+		}
+		providerID = resolvedID
+		if providerID == "" {
+			if err := r.syncCCSwitchDirectCodexConfig(); err != nil {
+				return "", err
+			}
+			return "", nil
+		}
+	}
 	if providerID == "" {
 		if !r.useCCSwitch {
-			return nil
+			return "", nil
 		}
 		current, err := r.runCommand(ctx, "", r.ccBin, []string{"--app", "codex", "provider", "current"}, "")
 		if err != nil {
-			return fmt.Errorf("cc-switch codex provider current: %w", err)
+			return "", fmt.Errorf("cc-switch codex provider current: %w", err)
 		}
 		providerID = parseCCSwitchCurrentProviderID(string(current))
 		if providerID == "" {
-			return fmt.Errorf("cc-switch codex provider current: could not parse provider id")
+			return "", fmt.Errorf("cc-switch codex provider current: could not parse provider id")
 		}
 	}
 	_, err := r.runCommand(ctx, "", r.ccBin, []string{"--app", "codex", "provider", "switch", providerID}, "")
 	if err != nil {
-		return fmt.Errorf("cc-switch codex provider switch: %w", err)
+		return "", fmt.Errorf("cc-switch codex provider switch: %w", err)
 	}
-	return nil
+	if err := r.syncCCSwitchCodexConfig(ctx, providerID); err != nil {
+		return "", err
+	}
+	return providerID, nil
+}
+
+func (r *Runner) resolveCCSwitchProviderByBaseURL(ctx context.Context, baseURL string) (string, error) {
+	baseURL = normalizeOpenAIBaseURL(baseURL)
+	if baseURL == "" {
+		return "", nil
+	}
+	dbPath := filepath.Join(firstNonEmpty(r.ccDir, "/cc-switch"), "cc-switch.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return "", fmt.Errorf("cc-switch codex config: open db: %w", err)
+	}
+	defer db.Close()
+
+	rows, err := db.QueryContext(ctx, `SELECT id, settings_config FROM providers WHERE app_type='codex'`)
+	if err != nil {
+		return "", fmt.Errorf("cc-switch codex config: read providers from %s: %w", dbPath, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, settingsConfig string
+		if err := rows.Scan(&id, &settingsConfig); err != nil {
+			return "", fmt.Errorf("cc-switch codex config: scan provider: %w", err)
+		}
+		if normalizeOpenAIBaseURL(baseURLFromCCSwitchProviderConfig(settingsConfig)) == baseURL {
+			return strings.TrimSpace(id), nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("cc-switch codex config: read providers: %w", err)
+	}
+	return "", nil
 }
 
 func parseCCSwitchCurrentProviderID(out string) string {
@@ -506,10 +560,167 @@ func (r *Runner) runWithProvider(ctx context.Context, dir string, args []string,
 	}
 	providerMu.Lock()
 	defer providerMu.Unlock()
-	if err := r.applyProvider(ctx); err != nil {
+	if _, err := r.applyProvider(ctx); err != nil {
 		return nil, err
 	}
 	return r.runCommand(ctx, dir, r.bin, args, stdin)
+}
+
+func (r *Runner) syncCCSwitchCodexConfig(ctx context.Context, providerID string) error {
+	if !r.useCCSwitch {
+		return nil
+	}
+	providerID = strings.TrimSpace(providerID)
+	if providerID == "" {
+		return fmt.Errorf("cc-switch codex config: empty provider id")
+	}
+	dbPath := filepath.Join(firstNonEmpty(r.ccDir, "/cc-switch"), "cc-switch.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return fmt.Errorf("cc-switch codex config: open db: %w", err)
+	}
+	defer db.Close()
+
+	var settingsConfig string
+	var name string
+	err = db.QueryRowContext(ctx, `SELECT settings_config, name FROM providers WHERE app_type='codex' AND id=?`, providerID).Scan(&settingsConfig, &name)
+	if err != nil {
+		return fmt.Errorf("cc-switch codex config: provider %q not found in %s: %w", providerID, dbPath, err)
+	}
+	configText, err := codexConfigFromCCSwitchProvider(providerID, name, settingsConfig)
+	if err != nil {
+		return err
+	}
+	home := r.effectiveCodexHome()
+	if home == "" {
+		return fmt.Errorf("cc-switch codex config: CODEX_HOME is empty")
+	}
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return fmt.Errorf("cc-switch codex config: prepare home: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(configText), 0o600); err != nil {
+		return fmt.Errorf("cc-switch codex config: write config.toml: %w", err)
+	}
+	if !strings.Contains(configText, "base_url") {
+		return fmt.Errorf("cc-switch codex config: provider %q config has no base_url", providerID)
+	}
+	return nil
+}
+
+func (r *Runner) syncCCSwitchDirectCodexConfig() error {
+	baseURL := strings.TrimSpace(r.ccBaseURL)
+	if baseURL == "" {
+		return fmt.Errorf("cc-switch codex config: base_url is required when provider is empty")
+	}
+	configText := codexConfigFromBaseURL("console", "Console", baseURL)
+	home := r.effectiveCodexHome()
+	if home == "" {
+		return fmt.Errorf("cc-switch codex config: CODEX_HOME is empty")
+	}
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return fmt.Errorf("cc-switch codex config: prepare home: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(configText), 0o600); err != nil {
+		return fmt.Errorf("cc-switch codex config: write config.toml: %w", err)
+	}
+	return nil
+}
+
+func codexConfigFromCCSwitchProvider(providerID, name, settingsConfig string) (string, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(settingsConfig), &raw); err != nil {
+		return "", fmt.Errorf("cc-switch codex config: parse provider %q settings: %w", providerID, err)
+	}
+	var configText string
+	if v, ok := raw["config"]; ok {
+		_ = json.Unmarshal(v, &configText)
+	}
+	configText = strings.TrimSpace(configText)
+	if configText != "" {
+		return configText + "\n", nil
+	}
+	var baseURL string
+	for _, key := range []string{"base_url", "baseUrl", "baseURL"} {
+		if v, ok := raw[key]; ok {
+			_ = json.Unmarshal(v, &baseURL)
+			baseURL = strings.TrimSpace(baseURL)
+			if baseURL != "" {
+				break
+			}
+		}
+	}
+	if baseURL == "" {
+		return "", fmt.Errorf("cc-switch codex config: provider %q has neither config nor base_url", providerID)
+	}
+	return codexConfigFromBaseURL(firstNonEmpty(providerID, name, "ccswitch"), firstNonEmpty(name, providerID, "cc-switch"), baseURL), nil
+}
+
+func baseURLFromCCSwitchProviderConfig(settingsConfig string) string {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(settingsConfig), &raw); err != nil {
+		return ""
+	}
+	for _, key := range []string{"base_url", "baseUrl", "baseURL"} {
+		if v, ok := raw[key]; ok {
+			var baseURL string
+			_ = json.Unmarshal(v, &baseURL)
+			if strings.TrimSpace(baseURL) != "" {
+				return strings.TrimSpace(baseURL)
+			}
+		}
+	}
+	var configText string
+	if v, ok := raw["config"]; ok {
+		_ = json.Unmarshal(v, &configText)
+	}
+	_, _, baseURL := parseCodexTOMLModelConfig(configText)
+	return baseURL
+}
+
+func parseCodexTOMLModelConfig(configText string) (string, string, string) {
+	var modelID, reasoning, baseURL string
+	for _, line := range strings.Split(configText, "\n") {
+		line = strings.TrimSpace(line)
+		if value, ok := strings.CutPrefix(line, "model = "); ok {
+			modelID = strings.Trim(strings.TrimSpace(value), `"`)
+		}
+		if value, ok := strings.CutPrefix(line, "model_reasoning_effort = "); ok {
+			reasoning = strings.Trim(strings.TrimSpace(value), `"`)
+		}
+		if value, ok := strings.CutPrefix(line, "base_url = "); ok {
+			baseURL = strings.Trim(strings.TrimSpace(value), `"`)
+		}
+	}
+	return modelID, reasoning, baseURL
+}
+
+func codexConfigFromBaseURL(providerID, name, baseURL string) string {
+	providerName := sanitizeProviderID(firstNonEmpty(providerID, name, "ccswitch"))
+	displayName := strings.ReplaceAll(firstNonEmpty(name, providerID, "cc-switch"), `"`, `\"`)
+	return fmt.Sprintf("model_provider = %q\n[model_providers.%s]\nname = %q\nbase_url = %q\n", providerName, providerName, displayName, normalizeOpenAIBaseURL(baseURL))
+}
+
+func sanitizeProviderID(value string) string {
+	value = strings.TrimSpace(value)
+	var b strings.Builder
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() == 0 {
+		return "ccswitch"
+	}
+	return b.String()
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 var providerMu sync.Mutex
