@@ -150,13 +150,19 @@ func (r *Runner) env() []string {
 		if eq < 0 {
 			continue
 		}
-		if secretEnvKeys[kv[:eq]] {
+		key := kv[:eq]
+		if secretEnvKeys[key] || (r.useCCSwitch && key == "HOME") {
 			continue
 		}
 		out = append(out, kv)
 	}
 	if r.codexHome != "" {
 		out = append(out, "CODEX_HOME="+r.effectiveCodexHome())
+	}
+	if r.useCCSwitch {
+		if home := r.ccSwitchHome(); home != "" {
+			out = append(out, "HOME="+home)
+		}
 	}
 	if r.apiKey != "" {
 		out = append(out, "CODEX_API_KEY="+r.apiKey)
@@ -177,6 +183,13 @@ func (r *Runner) effectiveCodexHome() string {
 	return filepath.Join(r.codexHome, "ccswitch-runtime")
 }
 
+func (r *Runner) ccSwitchHome() string {
+	if !r.useCCSwitch || strings.TrimSpace(r.codexHome) == "" {
+		return ""
+	}
+	return filepath.Join(r.codexHome, "ccswitch-home")
+}
+
 func (r *Runner) prepareCodexHome() error {
 	home := strings.TrimSpace(r.effectiveCodexHome())
 	if home == "" {
@@ -188,6 +201,23 @@ func (r *Runner) prepareCodexHome() error {
 	if r.useCCSwitch {
 		if err := os.Remove(filepath.Join(home, "auth.json")); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove ccswitch auth.json: %w", err)
+		}
+		ccHome := r.ccSwitchHome()
+		if ccHome == "" {
+			return nil
+		}
+		if err := os.MkdirAll(ccHome, 0o700); err != nil {
+			return fmt.Errorf("prepare cc-switch home: %w", err)
+		}
+		codexLink := filepath.Join(ccHome, ".codex")
+		if target, err := os.Readlink(codexLink); err == nil && target == home {
+			return nil
+		}
+		if err := os.RemoveAll(codexLink); err != nil {
+			return fmt.Errorf("reset cc-switch codex home link: %w", err)
+		}
+		if err := os.Symlink(home, codexLink); err != nil {
+			return fmt.Errorf("link cc-switch codex home: %w", err)
 		}
 	}
 	return nil

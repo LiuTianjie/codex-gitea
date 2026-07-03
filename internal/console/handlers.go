@@ -345,6 +345,7 @@ func (c *Console) handleEffectiveConfig(w http.ResponseWriter, r *http.Request) 
 		"codex_base_url":              cfg.CodexBaseURL,
 		"codex_auth_mode":             cfg.CodexAuthMode,
 		"codex_home_effective":        effectiveCodexHome(cfg),
+		"codex_ccswitch_home":         effectiveCCSwitchHome(cfg),
 		"codex_api_key_set":           strings.TrimSpace(cfg.CodexAPIKey) != "",
 		"codex_api_key_fingerprint":   secretFingerprint(cfg.CodexAPIKey),
 		"codex_cc_switch_provider_id": cfg.CodexCCSwitchProvider,
@@ -379,6 +380,13 @@ func effectiveCodexHome(cfg *config.Config) string {
 		return filepath.Join(cfg.CodexHome, "ccswitch-runtime")
 	}
 	return cfg.CodexHome
+}
+
+func effectiveCCSwitchHome(cfg *config.Config) string {
+	if cfg == nil || cfg.CodexAuthMode != config.AuthModeCCSwitch || strings.TrimSpace(cfg.CodexHome) == "" {
+		return ""
+	}
+	return filepath.Join(cfg.CodexHome, "ccswitch-home")
 }
 
 func secretFingerprint(value string) string {

@@ -43,6 +43,7 @@ stdin_payload="$(cat)"
   echo "OPENAI_API_KEY=${OPENAI_API_KEY}"
   echo "CODEX_HOME=${CODEX_HOME}"
   echo "CODEX_API_KEY=${CODEX_API_KEY}"
+  echo "HOME=${HOME}"
   i=0
   for a in "$@"; do
     echo "ARG[$i]=$a"
@@ -248,6 +249,7 @@ func TestRunner_ReviewSwitchesCodexProvider(t *testing.T) {
 		"CCARG[3]=switch",
 		"CCARG[4]=codex-relay",
 		"CODEX_HOME=" + filepath.Join(codexHome, "ccswitch-runtime"),
+		"HOME=" + filepath.Join(codexHome, "ccswitch-home"),
 		"ARG[0]=exec",
 	} {
 		if !strings.Contains(log, want) {
@@ -262,6 +264,13 @@ func TestRunner_ReviewSwitchesCodexProvider(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(codexHome, "ccswitch-runtime", "auth.json")); !os.IsNotExist(err) {
 		t.Fatalf("ccswitch runtime auth.json should not exist, err=%v", err)
+	}
+	linkTarget, err := os.Readlink(filepath.Join(codexHome, "ccswitch-home", ".codex"))
+	if err != nil {
+		t.Fatalf("cc-switch .codex link missing: %v", err)
+	}
+	if linkTarget != filepath.Join(codexHome, "ccswitch-runtime") {
+		t.Fatalf("cc-switch .codex link = %q, want runtime home", linkTarget)
 	}
 }
 
