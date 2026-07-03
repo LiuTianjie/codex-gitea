@@ -14,7 +14,7 @@ services:
       GITEA_TOKEN: ${GITEA_TOKEN:-}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
       MODEL: ${MODEL:-gpt-5-codex}
-      CODEX_REASONING_EFFORT: ${CODEX_REASONING_EFFORT:-}
+      CODEX_BASE_URL: ${CODEX_BASE_URL:-}
       CODEX_AUTH_MODE: ${CODEX_AUTH_MODE:-ccswitch}
       CODEX_CC_SWITCH_PROVIDER_ID: ${CODEX_CC_SWITCH_PROVIDER_ID:-}
       CLAUDE_ENABLED: ${CLAUDE_ENABLED:-false}
@@ -38,7 +38,7 @@ services:
       - work:/work            # throwaway worktrees
       - codex-home:/codex-home # Codex config/session state
       - claude-home:/claude-home # Claude Code settings/session state
-      - cc-switch:/cc-switch  # cc-switch provider/proxy config
+      - cc-switch:/cc-switch  # cc-switch provider/proxy/account config
     restart: unless-stopped
 
 volumes:

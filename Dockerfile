@@ -59,7 +59,6 @@ ENV LISTEN_ADDR=:8080 \
     WORK_DIR=/work \
     CODEX_HOME=/codex-home \
     CODEX_AUTH_MODE=ccswitch \
-    CODEX_REASONING_EFFORT= \
     CLAUDE_HOME=/claude-home \
     CC_SWITCH_CONFIG_DIR=/cc-switch
 

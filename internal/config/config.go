@@ -41,6 +41,7 @@ const (
 	DefaultMiniMaxModel    = ""
 	DefaultMiniMaxProvider = ""
 	DefaultAuthMode        = AuthModeCCSwitch
+	DefaultReasoningEffort = "high"
 	DefaultSandboxMode     = SandboxReadOnly
 	DefaultConcurrency     = 5
 	DefaultTimeout         = 30 * time.Minute
@@ -70,6 +71,7 @@ type Config struct {
 	// Codex
 	Model                 string
 	CodexReasoningEffort  string
+	CodexBaseURL          string
 	CodexAuthMode         string
 	CodexAPIKey           string
 	CodexCCSwitchProvider string
@@ -131,7 +133,8 @@ func LoadEnv() *Config {
 		WebhookSecret:         os.Getenv("WEBHOOK_SECRET"),
 		GiteaTimeout:          parseDuration(os.Getenv("GITEA_TIMEOUT"), DefaultGiteaTimeout),
 		Model:                 getEnv("MODEL", DefaultModel),
-		CodexReasoningEffort:  strings.TrimSpace(os.Getenv("CODEX_REASONING_EFFORT")),
+		CodexReasoningEffort:  DefaultReasoningEffort,
+		CodexBaseURL:          strings.TrimSpace(os.Getenv("CODEX_BASE_URL")),
 		CodexAuthMode:         normalizeAuthMode(getEnv("CODEX_AUTH_MODE", DefaultAuthMode)),
 		CodexAPIKey:           os.Getenv("CODEX_API_KEY"),
 		CodexCCSwitchProvider: os.Getenv("CODEX_CC_SWITCH_PROVIDER_ID"),
@@ -184,6 +187,9 @@ func (c *Config) ApplyOverrides(settings map[string]string) {
 	}
 	if v, ok := settings["codex_reasoning_effort"]; ok {
 		c.CodexReasoningEffort = strings.TrimSpace(v)
+	}
+	if v, ok := settings["codex_base_url"]; ok {
+		c.CodexBaseURL = strings.TrimSpace(v)
 	}
 	if v, ok := settings["codex_auth_mode"]; ok {
 		c.CodexAuthMode = normalizeAuthMode(v)

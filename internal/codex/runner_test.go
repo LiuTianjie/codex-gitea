@@ -356,6 +356,8 @@ func TestRunner_ReviewCustomModelAndReasoningEffort(t *testing.T) {
 		CodexHome:       t.TempDir(),
 		Model:           "gpt-5.5",
 		ReasoningEffort: "xhigh",
+		BaseURL:         "https://codex-relay.example.com/v1",
+		APIKey:          "sk-codex",
 	})
 
 	if _, err := r.Review(context.Background(), model.CodexInput{
@@ -371,6 +373,11 @@ func TestRunner_ReviewCustomModelAndReasoningEffort(t *testing.T) {
 		"--model",
 		"gpt-5.5",
 		"model_reasoning_effort=\"xhigh\"",
+		"model_provider=\"codex_gitea\"",
+		"model_providers.codex_gitea.name=\"codex-gitea\"",
+		"model_providers.codex_gitea.base_url=\"https://codex-relay.example.com/v1\"",
+		"model_providers.codex_gitea.env_key=\"CODEX_API_KEY\"",
+		"CODEX_API_KEY=sk-codex",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("missing %q in args:\n%s", want, log)

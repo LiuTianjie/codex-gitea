@@ -130,7 +130,7 @@ CREATE TABLE model_pricing (
 );
 INSERT INTO providers (id, app_type, name, settings_config, is_current)
 VALUES
-  ('codex-relay', 'codex', 'Relay', '{"config":"model = \"gpt-5.5\"\nmodel_reasoning_effort = \"xhigh\"\n"}', 1),
+  ('codex-relay', 'codex', 'Relay', '{"config":"model = \"gpt-5.5\"\nmodel_reasoning_effort = \"xhigh\"\n[model_providers.relay]\nbase_url = \"https://codex-relay.example.com/v1\"\n"}', 1),
   ('claude-relay', 'claude', 'Claude Relay', '{"env":{}}', 0);
 INSERT INTO model_pricing (model_id, display_name)
 VALUES ('gpt-5.5', 'GPT-5.5'), ('gpt-5.5-mini', 'GPT-5.5 Mini'), ('claude-sonnet-4-6', 'Claude Sonnet');
@@ -159,6 +159,7 @@ VALUES ('gpt-5.5', 'GPT-5.5'), ('gpt-5.5-mini', 'GPT-5.5 Mini'), ('claude-sonnet
 			Current         bool   `json:"current"`
 			Model           string `json:"model"`
 			ReasoningEffort string `json:"reasoning_effort"`
+			BaseURL         string `json:"base_url"`
 		} `json:"providers"`
 		Models []struct {
 			ID string `json:"id"`
@@ -171,7 +172,7 @@ VALUES ('gpt-5.5', 'GPT-5.5'), ('gpt-5.5-mini', 'GPT-5.5 Mini'), ('claude-sonnet
 	if !body.OK || len(body.Providers) != 1 {
 		t.Fatalf("options body = %+v", body)
 	}
-	if p := body.Providers[0]; p.ID != "codex-relay" || !p.Current || p.Model != "gpt-5.5" || p.ReasoningEffort != "xhigh" {
+	if p := body.Providers[0]; p.ID != "codex-relay" || !p.Current || p.Model != "gpt-5.5" || p.ReasoningEffort != "xhigh" || p.BaseURL != "https://codex-relay.example.com/v1" {
 		t.Fatalf("provider = %+v", p)
 	}
 	var sawModel bool
@@ -188,6 +189,70 @@ VALUES ('gpt-5.5', 'GPT-5.5'), ('gpt-5.5-mini', 'GPT-5.5 Mini'), ('claude-sonnet
 	}
 	if !containsString(body.ReasoningEfforts, "xhigh") {
 		t.Fatalf("reasoning efforts missing xhigh: %+v", body.ReasoningEfforts)
+	}
+}
+
+func TestCCSwitchCodexFetchModelsUsesProviderAndConfigDir(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "console.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	ccDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "cc-switch.log")
+	binDir := t.TempDir()
+	binPath := filepath.Join(binDir, "cc-switch")
+	script := `#!/bin/sh
+{
+  echo "CC_SWITCH_CONFIG_DIR=${CC_SWITCH_CONFIG_DIR}"
+  i=0
+  for a in "$@"; do
+    echo "ARG[$i]=$a"
+    i=$((i+1))
+  done
+} >> "$CC_SWITCH_STUB_LOG"
+echo "fetched"
+`
+	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write cc-switch stub: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CC_SWITCH_STUB_LOG", logPath)
+
+	cfg := &config.Config{AdminPassword: testPassword, CCSwitchConfigDir: ccDir}
+	c := New(st, cfg, filepath.Join(t.TempDir(), "codex-home"))
+	w := do(t, c.Routes(), "POST", "/admin/api/cc-switch/codex-options/fetch", `{"provider_id":"codex-relay"}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	var body struct {
+		OK      bool   `json:"ok"`
+		Fetched bool   `json:"fetched"`
+		Output  string `json:"cc_switch_output"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("parse body: %v\n%s", err, w.Body.String())
+	}
+	if !body.OK || !body.Fetched || body.Output != "fetched" {
+		t.Fatalf("fetch body = %+v", body)
+	}
+	logb, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read cc-switch log: %v", err)
+	}
+	log := string(logb)
+	for _, want := range []string{
+		"CC_SWITCH_CONFIG_DIR=" + ccDir,
+		"ARG[0]=--app",
+		"ARG[1]=codex",
+		"ARG[2]=provider",
+		"ARG[3]=fetch-models",
+		"ARG[4]=codex-relay",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("missing %q in log:\n%s", want, log)
+		}
 	}
 }
 

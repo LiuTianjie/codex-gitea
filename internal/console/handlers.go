@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -115,6 +116,7 @@ func (c *Console) Routes() http.Handler {
 	mux.HandleFunc("GET /admin/api/status", c.handleStatus)
 	mux.HandleFunc("GET /admin/api/effective-config", c.handleEffectiveConfig)
 	mux.HandleFunc("GET /admin/api/cc-switch/codex-options", c.handleCCSwitchCodexOptions)
+	mux.HandleFunc("POST /admin/api/cc-switch/codex-options/fetch", c.handleFetchCCSwitchCodexModels)
 	mux.HandleFunc("GET /admin/api/jobs", c.handleJobs)
 	mux.HandleFunc("GET /admin/api/jobs/stats", c.handleJobStats)
 	mux.HandleFunc("GET /admin/api/jobs/{id}", c.handleJobDetail)
@@ -324,6 +326,7 @@ func (c *Console) handleEffectiveConfig(w http.ResponseWriter, r *http.Request) 
 		"gitea_timeout":               cfg.GiteaTimeout.String(),
 		"model":                       cfg.Model,
 		"codex_reasoning_effort":      cfg.CodexReasoningEffort,
+		"codex_base_url":              cfg.CodexBaseURL,
 		"codex_auth_mode":             cfg.CodexAuthMode,
 		"codex_cc_switch_provider_id": cfg.CodexCCSwitchProvider,
 		"codex_sandbox_mode":          cfg.CodexSandbox,
@@ -355,6 +358,7 @@ type ccSwitchCodexProviderView struct {
 	Current         bool   `json:"current"`
 	Model           string `json:"model,omitempty"`
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	BaseURL         string `json:"base_url,omitempty"`
 }
 
 type ccSwitchModelView struct {
@@ -372,13 +376,68 @@ type ccSwitchCodexOptionsResponse struct {
 }
 
 func (c *Console) handleCCSwitchCodexOptions(w http.ResponseWriter, r *http.Request) {
+	resp := c.buildCCSwitchCodexOptions(r.Context())
+	writeJSON(w, http.StatusOK, resp)
+}
+
+type ccSwitchFetchModelsPayload struct {
+	ProviderID string `json:"provider_id"`
+}
+
+func (c *Console) handleFetchCCSwitchCodexModels(w http.ResponseWriter, r *http.Request) {
+	var p ccSwitchFetchModelsPayload
+	if r.Body != nil {
+		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&p)
+	}
+
+	cfg := c.currentConfig()
+	ccDir := config.DefaultCCSwitchDir
+	if cfg != nil && strings.TrimSpace(cfg.CCSwitchConfigDir) != "" {
+		ccDir = strings.TrimSpace(cfg.CCSwitchConfigDir)
+	}
+	args := []string{"--app", "codex", "provider", "fetch-models"}
+	if providerID := strings.TrimSpace(p.ProviderID); providerID != "" {
+		args = append(args, providerID)
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "cc-switch", args...)
+	cmd.Env = append(os.Environ(), "CC_SWITCH_CONFIG_DIR="+ccDir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if ctx.Err() == context.DeadlineExceeded {
+			writeError(w, http.StatusGatewayTimeout, "cc-switch fetch-models timed out")
+			return
+		}
+		if msg != "" {
+			writeError(w, http.StatusBadGateway, "cc-switch fetch-models failed: "+msg)
+			return
+		}
+		writeError(w, http.StatusBadGateway, "cc-switch fetch-models failed: "+err.Error())
+		return
+	}
+
+	resp := c.buildCCSwitchCodexOptions(r.Context())
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":                true,
+		"fetched":           true,
+		"cc_switch_output":  strings.TrimSpace(string(out)),
+		"path":              resp.Path,
+		"providers":         resp.Providers,
+		"models":            resp.Models,
+		"reasoning_efforts": resp.ReasoningEfforts,
+		"error":             resp.Error,
+	})
+}
+
+func (c *Console) buildCCSwitchCodexOptions(ctx context.Context) ccSwitchCodexOptionsResponse {
 	cfg := c.currentConfig()
 	ccDir := config.DefaultCCSwitchDir
 	if cfg != nil && strings.TrimSpace(cfg.CCSwitchConfigDir) != "" {
 		ccDir = strings.TrimSpace(cfg.CCSwitchConfigDir)
 	}
 	dbPath := filepath.Join(ccDir, "cc-switch.db")
-
 	resp := ccSwitchCodexOptionsResponse{
 		OK:               true,
 		Path:             dbPath,
@@ -392,23 +451,20 @@ func (c *Console) handleCCSwitchCodexOptions(w http.ResponseWriter, r *http.Requ
 		if !errors.Is(err, os.ErrNotExist) {
 			resp.Error = err.Error()
 		}
-		writeJSON(w, http.StatusOK, resp)
-		return
+		return resp
 	}
 
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		resp.Error = err.Error()
-		writeJSON(w, http.StatusOK, resp)
-		return
+		return resp
 	}
 	defer db.Close()
 
-	providers, err := readCCSwitchCodexProviders(r.Context(), db)
+	providers, err := readCCSwitchCodexProviders(ctx, db)
 	if err != nil {
 		resp.Error = err.Error()
-		writeJSON(w, http.StatusOK, resp)
-		return
+		return resp
 	}
 	resp.Providers = providers
 	for _, provider := range providers {
@@ -416,7 +472,7 @@ func (c *Console) handleCCSwitchCodexOptions(w http.ResponseWriter, r *http.Requ
 		resp.ReasoningEfforts = appendUnique(resp.ReasoningEfforts, provider.ReasoningEffort)
 	}
 
-	models, err := readCCSwitchCodexModels(r.Context(), db)
+	models, err := readCCSwitchCodexModels(ctx, db)
 	if err == nil {
 		for _, model := range models {
 			resp.Models = appendModelOption(resp.Models, model.ID, model.DisplayName)
@@ -424,7 +480,7 @@ func (c *Console) handleCCSwitchCodexOptions(w http.ResponseWriter, r *http.Requ
 	} else if resp.Error == "" && !errors.Is(err, sql.ErrNoRows) {
 		resp.Error = err.Error()
 	}
-	writeJSON(w, http.StatusOK, resp)
+	return resp
 }
 
 func readCCSwitchCodexProviders(ctx context.Context, db *sql.DB) ([]ccSwitchCodexProviderView, error) {
@@ -445,13 +501,14 @@ ORDER BY is_current DESC, name ASC, id ASC`)
 		if err := rows.Scan(&id, &name, &settingsConfig, &isCurrent); err != nil {
 			return nil, err
 		}
-		model, effort := parseCCSwitchCodexConfig(settingsConfig)
+		providerConfig := parseCCSwitchCodexConfig(settingsConfig)
 		providers = append(providers, ccSwitchCodexProviderView{
 			ID:              id,
 			Name:            name,
 			Current:         isCurrent,
-			Model:           model,
-			ReasoningEffort: effort,
+			Model:           providerConfig.Model,
+			ReasoningEffort: providerConfig.ReasoningEffort,
+			BaseURL:         providerConfig.BaseURL,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -484,26 +541,48 @@ func readCCSwitchCodexModels(ctx context.Context, db *sql.DB) ([]ccSwitchModelVi
 	return models, nil
 }
 
-func parseCCSwitchCodexConfig(settingsConfig string) (string, string) {
+type ccSwitchParsedCodexConfig struct {
+	Model           string
+	ReasoningEffort string
+	BaseURL         string
+}
+
+func parseCCSwitchCodexConfig(settingsConfig string) ccSwitchParsedCodexConfig {
+	var out ccSwitchParsedCodexConfig
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(settingsConfig), &raw); err != nil {
-		return "", ""
+		return out
+	}
+	for _, key := range []string{"base_url", "baseUrl", "baseURL"} {
+		if v, ok := raw[key]; ok {
+			_ = json.Unmarshal(v, &out.BaseURL)
+			if strings.TrimSpace(out.BaseURL) != "" {
+				out.BaseURL = strings.TrimSpace(out.BaseURL)
+				break
+			}
+		}
 	}
 	var configText string
 	if v, ok := raw["config"]; ok {
 		_ = json.Unmarshal(v, &configText)
 	}
 	if configText == "" {
-		return "", ""
+		return out
 	}
-	return parseCodexTOMLModelConfig(configText)
+	model, effort, baseURL := parseCodexTOMLModelConfig(configText)
+	out.Model = model
+	out.ReasoningEffort = effort
+	if out.BaseURL == "" {
+		out.BaseURL = baseURL
+	}
+	return out
 }
 
-func parseCodexTOMLModelConfig(configText string) (string, string) {
-	var modelID, reasoning string
+func parseCodexTOMLModelConfig(configText string) (string, string, string) {
+	var modelID, reasoning, baseURL string
 	for _, line := range strings.Split(configText, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "[") {
 			continue
 		}
 		key, value, ok := strings.Cut(line, "=")
@@ -523,9 +602,11 @@ func parseCodexTOMLModelConfig(configText string) (string, string) {
 			modelID = strings.TrimSpace(value)
 		case "model_reasoning_effort":
 			reasoning = strings.TrimSpace(value)
+		case "base_url":
+			baseURL = strings.TrimSpace(value)
 		}
 	}
-	return modelID, reasoning
+	return modelID, reasoning, baseURL
 }
 
 func defaultReasoningEfforts() []string {

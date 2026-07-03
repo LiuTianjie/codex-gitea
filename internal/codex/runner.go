@@ -48,6 +48,8 @@ type Options struct {
 	Model string
 	// ReasoningEffort optionally overrides Codex reasoning effort.
 	ReasoningEffort string
+	// BaseURL optionally points Codex at an OpenAI-compatible relay/provider.
+	BaseURL string
 	// APIKey, when set, runs codex in api-key mode (CODEX_API_KEY).
 	APIKey string
 	// CCSwitchBin is the cc-switch executable. Defaults to "cc-switch".
@@ -70,6 +72,7 @@ type Runner struct {
 	codexHome   string
 	model       string
 	reasoning   string
+	baseURL     string
 	apiKey      string
 	ccBin       string
 	ccDir       string
@@ -109,6 +112,7 @@ func New(opts Options) *Runner {
 		codexHome:   opts.CodexHome,
 		model:       strings.TrimSpace(opts.Model),
 		reasoning:   strings.TrimSpace(opts.ReasoningEffort),
+		baseURL:     strings.TrimSpace(opts.BaseURL),
 		apiKey:      opts.APIKey,
 		ccBin:       ccBin,
 		ccDir:       opts.CCSwitchConfigDir,
@@ -160,6 +164,16 @@ func (r *Runner) reviewBaseArgs(schemaPath, outPath string) []string {
 }
 
 func (r *Runner) appendModelConfig(args []string) []string {
+	if r.baseURL != "" {
+		args = append(args,
+			"-c", "model_provider=\"codex_gitea\"",
+			"-c", "model_providers.codex_gitea.name=\"codex-gitea\"",
+			"-c", fmt.Sprintf("model_providers.codex_gitea.base_url=%q", r.baseURL),
+		)
+		if r.apiKey != "" {
+			args = append(args, "-c", "model_providers.codex_gitea.env_key=\"CODEX_API_KEY\"")
+		}
+	}
 	if r.reasoning != "" {
 		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", r.reasoning))
 	}

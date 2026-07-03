@@ -18,9 +18,9 @@ func TestLoadEnvDefaults(t *testing.T) {
 	// ones we rely on being empty so a polluted environment can't break the test.
 	for _, k := range []string{
 		"LISTEN_ADDR", "DB_PATH", "CACHE_DIR", "WORK_DIR", "CODEX_HOME", "MODEL",
-		"CODEX_AUTH_MODE", "CODEX_API_KEY", "GITEA_URL", "GITEA_TOKEN",
+		"CODEX_AUTH_MODE", "CODEX_API_KEY", "CODEX_BASE_URL", "GITEA_URL", "GITEA_TOKEN",
 		"WEBHOOK_SECRET", "ADMIN_PASSWORD", "TRIGGER_KEYWORDS", "CONCURRENCY",
-		"REPO_ALLOWLIST", "TIMEOUT", "SECRET_KEY", "CODEX_SANDBOX_MODE", "CODEX_REASONING_EFFORT",
+		"REPO_ALLOWLIST", "TIMEOUT", "SECRET_KEY", "CODEX_SANDBOX_MODE",
 		"CODEX_CC_SWITCH_PROVIDER_ID",
 		"CLAUDE_ENABLED", "CLAUDE_MODEL", "CLAUDE_API_KEY", "CLAUDE_BASE_URL",
 		"CLAUDE_HOME", "CC_SWITCH_CONFIG_DIR", "CC_SWITCH_PROVIDER_ID", "CLAUDE_MAX_BUDGET_USD",
@@ -51,6 +51,9 @@ func TestLoadEnvDefaults(t *testing.T) {
 	}
 	if c.CodexSandbox != DefaultSandboxMode {
 		t.Errorf("CodexSandbox = %q, want %q", c.CodexSandbox, DefaultSandboxMode)
+	}
+	if c.CodexReasoningEffort != DefaultReasoningEffort {
+		t.Errorf("CodexReasoningEffort = %q, want %q", c.CodexReasoningEffort, DefaultReasoningEffort)
 	}
 	if c.ClaudeHome != DefaultClaudeHome {
 		t.Errorf("ClaudeHome = %q, want %q", c.ClaudeHome, DefaultClaudeHome)
@@ -98,7 +101,7 @@ func TestLoadEnvValues(t *testing.T) {
 		"GITEA_TIMEOUT":               "45s",
 		"WEBHOOK_SECRET":              "whsec",
 		"MODEL":                       "gpt-5",
-		"CODEX_REASONING_EFFORT":      "xhigh",
+		"CODEX_BASE_URL":              "https://codex-relay.example.com/v1",
 		"CODEX_AUTH_MODE":             "apikey",
 		"CODEX_API_KEY":               "sk-abc",
 		"CODEX_SANDBOX_MODE":          "danger-full-access",
@@ -145,8 +148,11 @@ func TestLoadEnvValues(t *testing.T) {
 	if c.Model != "gpt-5" {
 		t.Errorf("Model = %q", c.Model)
 	}
-	if c.CodexReasoningEffort != "xhigh" {
+	if c.CodexReasoningEffort != DefaultReasoningEffort {
 		t.Errorf("CodexReasoningEffort = %q", c.CodexReasoningEffort)
+	}
+	if c.CodexBaseURL != "https://codex-relay.example.com/v1" {
+		t.Errorf("CodexBaseURL = %q", c.CodexBaseURL)
 	}
 	if c.CodexAuthMode != AuthModeAPIKey {
 		t.Errorf("CodexAuthMode = %q, want apikey", c.CodexAuthMode)
@@ -220,7 +226,8 @@ func TestApplyOverrides(t *testing.T) {
 		"gitea_token":                 "db-tok",
 		"gitea_timeout":               "75s",
 		"model":                       "db-model",
-		"codex_reasoning_effort":      "high",
+		"codex_reasoning_effort":      "xhigh",
+		"codex_base_url":              "https://db-codex-relay.example.com/v1",
 		"codex_auth_mode":             "apikey",
 		"codex_api_key":               "sk-db",
 		"codex_sandbox_mode":          "workspace-write",
@@ -254,8 +261,11 @@ func TestApplyOverrides(t *testing.T) {
 	if c.Model != "db-model" {
 		t.Errorf("Model not overridden: %q", c.Model)
 	}
-	if c.CodexReasoningEffort != "high" {
+	if c.CodexReasoningEffort != "xhigh" {
 		t.Errorf("CodexReasoningEffort not overridden: %q", c.CodexReasoningEffort)
+	}
+	if c.CodexBaseURL != "https://db-codex-relay.example.com/v1" {
+		t.Errorf("CodexBaseURL not overridden: %q", c.CodexBaseURL)
 	}
 	if c.CodexAuthMode != AuthModeAPIKey {
 		t.Errorf("CodexAuthMode not overridden: %q", c.CodexAuthMode)

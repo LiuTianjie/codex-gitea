@@ -18,10 +18,11 @@
 
 gitea-review-agent receives Gitea pull request events through webhooks, prepares
 a read-only checkout, runs a configured reviewer, and posts review findings back
-to the PR. It can use Codex by default, and can also run Claude Code or a
-MiniMax-compatible reviewer as separate review backends. MiniMax-compatible
-runs reuse the Claude Code path and can be routed through cc-switch providers or
-an Anthropic-compatible relay endpoint.
+to the PR. It uses Codex by default, with Codex provider/account selection
+managed through cc-switch. It can also run Claude Code or a MiniMax-compatible
+reviewer as separate review backends. MiniMax-compatible runs reuse the Claude
+Code path and can be routed through cc-switch providers or an
+Anthropic-compatible relay endpoint.
 
 Reviews are stateful: follow-up pushes and `/review` comments can continue the
 same reviewer session instead of starting from an empty context every time.
@@ -42,8 +43,10 @@ same reviewer session instead of starting from an empty context every time.
   events from Gitea webhooks.
 - **Pluggable reviewers** — Codex, Claude Code, and MiniMax-compatible reviewer
   backends can be configured independently.
-- **cc-switch provider routing** — MiniMax-compatible reviews can reuse the
-  Claude Code runner and switch provider through cc-switch before each run.
+- **cc-switch provider routing** — Codex uses cc-switch by default; the console
+  can read Codex providers, model ids, and reasoning-effort values from
+  `cc-switch.db`. Claude Code and MiniMax-compatible runs can also switch
+  providers through cc-switch before each run.
 - **Read-only checkouts** — reviewer processes inspect the diff and do not run
   repository code.
 - **Incremental git cache** — repositories are mirrored under `/cache`, then
@@ -71,6 +74,31 @@ Gitea webhook
 
 Codex is the default reviewer. Claude Code and MiniMax-compatible reviewers are
 optional and keep their own reviewer identity, sessions, logs, and PR comments.
+
+Codex authentication defaults to `ccswitch`. Configure a Codex provider/account
+with cc-switch, then choose the provider, base URL, model, and reasoning effort
+in `/admin`. The console reads candidates from `/cc-switch/cc-switch.db`,
+including provider-level Codex config such as:
+
+```toml
+model = "gpt-5.5"
+model_reasoning_effort = "xhigh"
+
+[model_providers.relay]
+base_url = "https://relay.example.com/v1"
+```
+
+When a base URL, model, or reasoning effort is saved in the console, the runner
+passes it to Codex as an explicit override for each review. A Codex base URL is
+applied through Codex's custom `model_provider` config. The app default
+reasoning effort is `high` for review depth; clear the field in `/admin` if you
+want the selected cc-switch provider's own default instead.
+
+If model candidates are empty in `/admin`, fetch them once with cc-switch:
+
+```bash
+cc-switch --app codex provider fetch-models <provider-id>
+```
 
 MiniMax-compatible review runs through the Claude Code execution path. There are
 two supported ways to route it:
@@ -121,7 +149,7 @@ Persist these paths in production:
 - `/work` — temporary worktrees
 - `/codex-home` — Codex config and sessions
 - `/claude-home` — Claude Code state
-- `/cc-switch` — optional provider/proxy configuration
+- `/cc-switch` — cc-switch provider/proxy/account configuration
 
 ## Auth: cc-switch (default), authfile, or apikey
 
@@ -135,8 +163,8 @@ In `ccswitch` mode the `/cc-switch` volume **must be writable** so cc-switch can
 store providers, accounts, proxy state, and Codex live config. `CODEX_CC_SWITCH_PROVIDER_ID`
 is optional; when it is set, the runner switches to that Codex provider before
 each review. The admin console reads Codex providers, model ids, and
-`model_reasoning_effort` values from `cc-switch.db`; saved `MODEL` and
-`CODEX_REASONING_EFFORT` values are then passed to Codex as explicit overrides.
+`model_reasoning_effort` values from `cc-switch.db`; saved console values are
+then passed to Codex as explicit overrides.
 
 ## First-run checklist
 
@@ -221,7 +249,7 @@ Env vars (all optional except `ADMIN_PASSWORD`; the console can set the rest):
 | `GITEA_TIMEOUT` | `90s` | per Gitea API request; also configurable in console |
 | `WEBHOOK_SECRET` | — | HMAC-SHA256 verification |
 | `MODEL` | `gpt-5-codex` | codex model |
-| `CODEX_REASONING_EFFORT` | — | optional Codex `model_reasoning_effort`; leave empty to use the cc-switch/provider default |
+| `CODEX_BASE_URL` | — | optional Codex relay/provider base URL; also configurable in console |
 | `CODEX_AUTH_MODE` | `ccswitch` | or legacy `authfile`, or `apikey` |
 | `CODEX_CC_SWITCH_PROVIDER_ID` | — | optional cc-switch Codex app provider id switched before Codex runs |
 | `CODEX_API_KEY` | — | apikey mode only (separately billed) |

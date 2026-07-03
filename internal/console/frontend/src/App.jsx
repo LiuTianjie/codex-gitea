@@ -34,6 +34,7 @@ const FIELDS = [
   'webhook_secret',
   'model',
   'codex_reasoning_effort',
+  'codex_base_url',
   'trigger_keywords',
   'concurrency',
   'codex_auth_mode',
@@ -60,13 +61,14 @@ const FIELDS = [
 
 const FIELD_GROUPS = {
   common: ['gitea_url', 'gitea_token', 'gitea_timeout', 'webhook_secret', 'trigger_keywords', 'repo_allowlist', 'concurrency', 'timeout'],
-  codex: ['model', 'codex_reasoning_effort', 'codex_auth_mode', 'codex_cc_switch_provider_id', 'codex_sandbox_mode', 'codex_api_key'],
+  codex: ['model', 'codex_reasoning_effort', 'codex_base_url', 'codex_auth_mode', 'codex_cc_switch_provider_id', 'codex_sandbox_mode', 'codex_api_key'],
   claude: ['claude_enabled', 'claude_model', 'claude_api_key', 'claude_base_url', 'claude_home', 'cc_switch_config_dir', 'cc_switch_provider_id', 'claude_max_budget_usd'],
   minimax: ['minimax_enabled', 'minimax_model', 'minimax_provider_id', 'minimax_api_key', 'minimax_base_url', 'minimax_max_budget_usd']
 }
 
 const DEFAULT_SETTINGS = {
   codex_auth_mode: 'ccswitch',
+  codex_reasoning_effort: 'high',
   claude_model: 'sonnet',
   claude_home: '/claude-home',
   cc_switch_config_dir: '/cc-switch',
@@ -85,6 +87,7 @@ const SETTING_META = {
   webhook_secret: { label: 'Webhook Secret', secret: true },
   model: { label: 'Codex Model', placeholder: 'gpt-5-codex' },
   codex_reasoning_effort: { label: 'Codex 思考强度', type: 'select', options: DEFAULT_REASONING_EFFORTS },
+  codex_base_url: { label: 'Codex Base URL', placeholder: 'https://relay.example.com/v1' },
   trigger_keywords: { label: '触发关键词', placeholder: '/review,@review' },
   repo_allowlist: { label: '仓库白名单', placeholder: 'owner/repo,owner/repo2' },
   concurrency: { label: 'Worker 并发', placeholder: '5' },
@@ -1268,6 +1271,7 @@ function ConfigPanel() {
   const [effectiveConfig, setEffectiveConfig] = useState(null)
   const [ccSwitchOptions, setCCSwitchOptions] = useState(null)
   const [status, setStatus] = useState(null)
+  const [fetchingModels, setFetchingModels] = useState(false)
   const [settingsMessage, setSettingsMessage] = useState(null)
 
   const loadSettings = useCallback(async () => {
@@ -1307,6 +1311,23 @@ function ConfigPanel() {
     }
   }, [])
 
+  const fetchCodexModels = useCallback(async () => {
+    setFetchingModels(true)
+    try {
+      const payload = await fetchJSON('/admin/api/cc-switch/codex-options/fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider_id: settings.codex_cc_switch_provider_id || '' })
+      }, 70000)
+      setCCSwitchOptions(payload)
+      setSettingsMessage({ ok: true, text: '已从 cc-switch 获取 Codex 模型列表' })
+    } catch (error) {
+      setSettingsMessage({ ok: false, text: `获取 Codex 模型失败：${error.message}` })
+    } finally {
+      setFetchingModels(false)
+    }
+  }, [settings.codex_cc_switch_provider_id])
+
   useEffect(() => {
     loadSettings()
     loadEffectiveConfig()
@@ -1322,6 +1343,10 @@ function ConfigPanel() {
       settings.codex_cc_switch_provider_id,
       ...(ccSwitchOptions?.providers || []).map((item) => item.id)
     ])
+    const baseURLOptions = uniqueValues([
+      settings.codex_base_url,
+      ...(ccSwitchOptions?.providers || []).map((item) => item.base_url)
+    ])
     const reasoningOptions = ['', ...uniqueValues([
       settings.codex_reasoning_effort,
       ...(ccSwitchOptions?.reasoning_efforts || []),
@@ -1330,10 +1355,11 @@ function ConfigPanel() {
     return {
       ...SETTING_META,
       model: { ...SETTING_META.model, type: 'datalist', options: modelOptions },
+      codex_base_url: { ...SETTING_META.codex_base_url, type: 'datalist', options: baseURLOptions },
       codex_cc_switch_provider_id: { ...SETTING_META.codex_cc_switch_provider_id, type: 'datalist', options: providerOptions },
       codex_reasoning_effort: { ...SETTING_META.codex_reasoning_effort, options: reasoningOptions }
     }
-  }, [settings.model, settings.codex_cc_switch_provider_id, settings.codex_reasoning_effort, ccSwitchOptions])
+  }, [settings.model, settings.codex_base_url, settings.codex_cc_switch_provider_id, settings.codex_reasoning_effort, ccSwitchOptions])
 
   const setField = (key, value) => {
     setSettings((current) => ({ ...current, [key]: value }))
@@ -1372,6 +1398,7 @@ function ConfigPanel() {
         </div>
         <div className="toolbar">
           <IconButton icon={RefreshCw} onClick={() => { loadSettings(); loadEffectiveConfig(); loadCCSwitchOptions(); }}>刷新</IconButton>
+          <IconButton icon={Download} onClick={fetchCodexModels} disabled={fetchingModels}>{fetchingModels ? '获取中' : '获取 Codex 模型'}</IconButton>
           <IconButton icon={Activity} onClick={checkStatus}>检测 Reviewer</IconButton>
         </div>
       </div>
