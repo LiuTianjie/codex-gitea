@@ -126,7 +126,7 @@ async function fetchJSON(url, options = {}, timeoutMs = 10000) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const response = await fetch(url, { ...options, signal: controller.signal })
+    const response = await fetch(url, { credentials: 'same-origin', ...options, signal: controller.signal })
     const text = await response.text()
     let body = null
     if (text.trim()) {
@@ -137,6 +137,11 @@ async function fetchJSON(url, options = {}, timeoutMs = 10000) {
       }
     }
     if (!response.ok) {
+      if (response.status === 401) {
+        const error = new Error('登录已过期，请重新登录')
+        error.status = response.status
+        throw error
+      }
       throw new Error(body?.error || body?.status || `${response.status} ${response.statusText}`)
     }
     return body
@@ -1452,6 +1457,7 @@ function ChatProbePanel() {
               </div>
             </div>
             <pre className="status-box">{reply.ok ? (reply.output || '(empty)') : (reply.error || JSON.stringify(reply, null, 2))}</pre>
+            {reply.debug ? <pre className="status-box">{JSON.stringify(reply.debug, null, 2)}</pre> : null}
           </div>
         ) : null}
       </section>
@@ -1582,6 +1588,9 @@ function ConfigPanel() {
       await Promise.all([loadSettings(), loadEffectiveConfig(), loadCCSwitchOptions(), checkStatus()])
     } catch (error) {
       setSettingsMessage({ ok: false, text: `保存失败：${error.message}` })
+      if (error.status === 401) {
+        window.location.href = '/admin/login'
+      }
     }
   }
 

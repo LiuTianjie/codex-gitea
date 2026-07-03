@@ -255,7 +255,7 @@ func runChatProbe(ctx context.Context, cfg *config.Config, in console.ChatProbeI
 			Model:              modelName,
 			ReasoningEffort:    reasoning,
 			BaseURL:            baseURL,
-			APIKey:             codexAPIKeyForMode(cfg),
+			APIKey:             codexAPIKeyForBaseURL(cfg, baseURL),
 			CCSwitchConfigDir:  cfg.CCSwitchConfigDir,
 			UseCCSwitch:        cfg.CodexAuthMode == config.AuthModeCCSwitch,
 			CCSwitchProviderID: providerID,
@@ -303,7 +303,14 @@ func firstNonEmpty(values ...string) string {
 }
 
 func codexAPIKeyForMode(cfg *config.Config) string {
-	if cfg != nil && cfg.CodexAuthMode == config.AuthModeAPIKey {
+	return codexAPIKeyForBaseURL(cfg, "")
+}
+
+func codexAPIKeyForBaseURL(cfg *config.Config, baseURL string) string {
+	if cfg == nil {
+		return ""
+	}
+	if cfg.CodexAuthMode == config.AuthModeAPIKey || strings.TrimSpace(cfg.CodexBaseURL) != "" || strings.TrimSpace(baseURL) != "" {
 		return cfg.CodexAPIKey
 	}
 	return ""

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -112,7 +113,7 @@ func New(opts Options) *Runner {
 		codexHome:   opts.CodexHome,
 		model:       strings.TrimSpace(opts.Model),
 		reasoning:   strings.TrimSpace(opts.ReasoningEffort),
-		baseURL:     strings.TrimSpace(opts.BaseURL),
+		baseURL:     normalizeOpenAIBaseURL(opts.BaseURL),
 		apiKey:      opts.APIKey,
 		ccBin:       ccBin,
 		ccDir:       opts.CCSwitchConfigDir,
@@ -121,6 +122,22 @@ func New(opts Options) *Runner {
 		sandbox:     sandbox,
 		timeout:     timeout,
 	}
+}
+
+func normalizeOpenAIBaseURL(raw string) string {
+	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return raw
+	}
+	if u.Path == "" || u.Path == "/" {
+		u.Path = "/v1"
+		return strings.TrimRight(u.String(), "/")
+	}
+	return raw
 }
 
 // env builds the codex/cc-switch process environment: the parent environment
@@ -310,7 +327,8 @@ func validUTF8Prompt(prompt string) string {
 // Status reports codex auth state by running `codex login status`.
 func (r *Runner) Status(ctx context.Context) (string, error) {
 	if r.useCCSwitch || strings.TrimSpace(r.ccProvider) != "" {
-		return r.ccSwitchStatus(ctx)
+		status, err := r.ccSwitchStatus(ctx)
+		return r.withConfiguredProviderStatus(status), err
 	}
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
@@ -320,12 +338,47 @@ func (r *Runner) Status(ctx context.Context) (string, error) {
 	out, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if err != nil {
+		text = r.withConfiguredProviderStatus(text)
 		if text != "" {
 			return text, fmt.Errorf("codex login status: %w: %s", err, text)
 		}
 		return "", fmt.Errorf("codex login status: %w", err)
 	}
-	return text, nil
+	return r.withConfiguredProviderStatus(text), nil
+}
+
+func (r *Runner) withConfiguredProviderStatus(status string) string {
+	configured := r.configuredProviderStatus()
+	if configured == "" {
+		return status
+	}
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return configured
+	}
+	return configured + "\n\n" + status
+}
+
+func (r *Runner) configuredProviderStatus() string {
+	if strings.TrimSpace(r.baseURL) == "" {
+		return ""
+	}
+	apiKeyStatus := "empty"
+	if r.apiKey != "" {
+		apiKeyStatus = "set"
+	}
+	parts := []string{
+		"codex configured provider:",
+		"Base URL: " + r.baseURL,
+		"API key: " + apiKeyStatus,
+	}
+	if r.model != "" {
+		parts = append(parts, "Model: "+r.model)
+	}
+	if r.reasoning != "" {
+		parts = append(parts, "Reasoning effort: "+r.reasoning)
+	}
+	return strings.Join(parts, "\n")
 }
 
 func (r *Runner) ccSwitchStatus(ctx context.Context) (string, error) {

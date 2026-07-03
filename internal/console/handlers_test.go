@@ -255,7 +255,7 @@ echo "fetched"
 
 	cfg := &config.Config{AdminPassword: testPassword, CCSwitchConfigDir: ccDir}
 	c := New(st, cfg, filepath.Join(t.TempDir(), "codex-home"))
-	w := do(t, c.Routes(), "POST", "/admin/api/cc-switch/codex-options/fetch", `{"provider_id":"codex-relay","base_url":"https://codex-relay.example.com/v1"}`, true)
+	w := do(t, c.Routes(), "POST", "/admin/api/cc-switch/codex-options/fetch", `{"provider_id":"codex-relay","base_url":"https://codex-relay.example.com"}`, true)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}

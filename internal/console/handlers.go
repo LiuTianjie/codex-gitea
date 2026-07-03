@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -343,6 +344,8 @@ func (c *Console) handleEffectiveConfig(w http.ResponseWriter, r *http.Request) 
 		"codex_reasoning_effort":      cfg.CodexReasoningEffort,
 		"codex_base_url":              cfg.CodexBaseURL,
 		"codex_auth_mode":             cfg.CodexAuthMode,
+		"codex_api_key_set":           strings.TrimSpace(cfg.CodexAPIKey) != "",
+		"codex_api_key_fingerprint":   secretFingerprint(cfg.CodexAPIKey),
 		"codex_cc_switch_provider_id": cfg.CodexCCSwitchProvider,
 		"codex_sandbox_mode":          cfg.CodexSandbox,
 		"claude_enabled":              cfg.ClaudeEnabled,
@@ -365,6 +368,34 @@ func (c *Console) handleEffectiveConfig(w http.ResponseWriter, r *http.Request) 
 		"config_source":               os.Getenv("CONFIG_SOURCE"),
 		"runtime_reload_note":         "保存设置会写入数据库；后续 review 会热生效 Gitea token/timeout、Webhook 密钥、触发关键词、仓库白名单和 reviewer 配置；监听地址和 worker 并发仍需重启服务。",
 	})
+}
+
+func secretFingerprint(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= 8 {
+		return fmt.Sprintf("len=%d", len(runes))
+	}
+	return fmt.Sprintf("len=%d %s...%s", len(runes), string(runes[:4]), string(runes[len(runes)-4:]))
+}
+
+func normalizeOpenAIBaseURL(raw string) string {
+	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return raw
+	}
+	if u.Path == "" || u.Path == "/" {
+		u.Path = "/v1"
+		return strings.TrimRight(u.String(), "/")
+	}
+	return raw
 }
 
 func (c *Console) handleChatProbe(w http.ResponseWriter, r *http.Request) {
@@ -395,12 +426,14 @@ func (c *Console) handleChatProbe(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	out, err := c.chatProbe(r.Context(), in)
 	elapsed := time.Since(start)
+	debug := c.chatProbeDebug(in)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":         false,
 			"reviewer":   in.Reviewer,
 			"error":      err.Error(),
 			"elapsed_ms": elapsed.Milliseconds(),
+			"debug":      debug,
 		})
 		return
 	}
@@ -409,7 +442,48 @@ func (c *Console) handleChatProbe(w http.ResponseWriter, r *http.Request) {
 		"reviewer":   in.Reviewer,
 		"output":     out,
 		"elapsed_ms": elapsed.Milliseconds(),
+		"debug":      debug,
 	})
+}
+
+func (c *Console) chatProbeDebug(in ChatProbeInput) map[string]any {
+	cfg := c.currentConfig()
+	debug := map[string]any{
+		"base_url":            strings.TrimSpace(in.BaseURL),
+		"provider_id":         strings.TrimSpace(in.ProviderID),
+		"model":               strings.TrimSpace(in.Model),
+		"reasoning_effort":    strings.TrimSpace(in.ReasoningEffort),
+		"configured_base_url": "",
+		"api_key_set":         false,
+		"api_key_fingerprint": "",
+	}
+	if cfg == nil {
+		return debug
+	}
+	switch in.Reviewer {
+	case "codex":
+		debug["configured_base_url"] = cfg.CodexBaseURL
+		debug["api_key_set"] = strings.TrimSpace(cfg.CodexAPIKey) != ""
+		debug["api_key_fingerprint"] = secretFingerprint(cfg.CodexAPIKey)
+		if debug["base_url"] == "" {
+			debug["base_url"] = cfg.CodexBaseURL
+		}
+	case "claude":
+		debug["configured_base_url"] = cfg.ClaudeBaseURL
+		debug["api_key_set"] = strings.TrimSpace(cfg.ClaudeAPIKey) != ""
+		debug["api_key_fingerprint"] = secretFingerprint(cfg.ClaudeAPIKey)
+		if debug["base_url"] == "" {
+			debug["base_url"] = cfg.ClaudeBaseURL
+		}
+	case "minimax":
+		debug["configured_base_url"] = cfg.MiniMaxBaseURL
+		debug["api_key_set"] = strings.TrimSpace(cfg.MiniMaxAPIKey) != ""
+		debug["api_key_fingerprint"] = secretFingerprint(cfg.MiniMaxAPIKey)
+		if debug["base_url"] == "" {
+			debug["base_url"] = cfg.MiniMaxBaseURL
+		}
+	}
+	return debug
 }
 
 type ccSwitchCodexProviderView struct {
@@ -489,6 +563,7 @@ func (c *Console) handleFetchCCSwitchCodexModels(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, "cc-switch fetch-models requires a Codex base URL")
 		return
 	}
+	baseURL = normalizeOpenAIBaseURL(baseURL)
 
 	args := []string{"--app", "codex", "provider", "fetch-models", "--base-url", baseURL, providerID}
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)

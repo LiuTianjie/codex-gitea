@@ -474,6 +474,40 @@ func TestRunner_StatusWithCCSwitchProvider(t *testing.T) {
 	}
 }
 
+func TestRunner_StatusShowsConfiguredProviderBeforeCCSwitchCurrent(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "stub.log")
+	writeStub(t, logPath)
+	ccSwitchBin := writeCCSwitchStub(t, logPath)
+
+	r := New(Options{
+		CCSwitchBin:     ccSwitchBin,
+		UseCCSwitch:     true,
+		Model:           "gpt-5.5",
+		ReasoningEffort: "high",
+		BaseURL:         "https://llm.1sir.cc",
+		APIKey:          "sk-codex",
+	})
+	out, err := r.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"codex configured provider:",
+		"Base URL: https://llm.1sir.cc/v1",
+		"API key: set",
+		"Model: gpt-5.5",
+		"Reasoning effort: high",
+		"cc-switch current:",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("Status missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Index(out, "codex configured provider:") > strings.Index(out, "cc-switch current:") {
+		t.Fatalf("configured provider should be shown before cc-switch current:\n%s", out)
+	}
+}
+
 func TestRunner_Timeout(t *testing.T) {
 	writeStub(t, filepath.Join(t.TempDir(), "stub.log"))
 	t.Setenv("STUB_SLEEP", "5")

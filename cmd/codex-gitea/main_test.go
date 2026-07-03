@@ -118,6 +118,7 @@ func TestRunChatProbeCodexForcesReadOnlySandbox(t *testing.T) {
 	script := `#!/bin/sh
 stdin_payload="$(cat)"
 {
+  echo "CODEX_API_KEY=${CODEX_API_KEY}"
   i=0
   for a in "$@"; do
     echo "ARG[$i]=$a"
@@ -136,8 +137,10 @@ printf '%s\n' '{"type":"turn.completed"}'
 	t.Setenv("CODEX_STUB_LOG", logPath)
 
 	cfg := &config.Config{
-		CodexAuthMode: config.AuthModeAuthFile,
+		CodexAuthMode: config.AuthModeCCSwitch,
 		CodexSandbox:  config.SandboxDangerFullAccess,
+		CodexBaseURL:  "https://llm.1sir.cc",
+		CodexAPIKey:   "sk-from-settings",
 		Timeout:       time.Minute,
 		GiteaTimeout:  time.Minute,
 	}
@@ -154,5 +157,69 @@ printf '%s\n' '{"type":"turn.completed"}'
 	}
 	if strings.Contains(log, "sandbox_mode=danger-full-access") {
 		t.Fatalf("probe inherited danger-full-access sandbox:\n%s", log)
+	}
+	for _, want := range []string{
+		"CODEX_API_KEY=sk-from-settings",
+		"model_provider=\"codex_gitea\"",
+		"model_providers.codex_gitea.base_url=\"https://llm.1sir.cc/v1\"",
+		"model_providers.codex_gitea.env_key=\"CODEX_API_KEY\"",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("probe missing configured Codex provider value %q:\n%s", want, log)
+		}
+	}
+}
+
+func TestRunChatProbeCodexUsesAPIKeyWithTemporaryBaseURL(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "codex.log")
+	binDir := t.TempDir()
+	binPath := filepath.Join(binDir, "codex-stub.sh")
+	script := `#!/bin/sh
+stdin_payload="$(cat)"
+{
+  echo "CODEX_API_KEY=${CODEX_API_KEY}"
+  i=0
+  for a in "$@"; do
+    echo "ARG[$i]=$a"
+    i=$((i+1))
+  done
+  echo "STDIN=${stdin_payload}"
+} >> "$CODEX_STUB_LOG"
+printf '%s\n' '{"type":"thread.started","thread_id":"probe-thread"}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"OK"}}'
+printf '%s\n' '{"type":"turn.completed"}'
+`
+	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write codex stub: %v", err)
+	}
+	t.Setenv("CODEX_BIN", binPath)
+	t.Setenv("CODEX_STUB_LOG", logPath)
+
+	cfg := &config.Config{
+		CodexAuthMode: config.AuthModeCCSwitch,
+		CodexAPIKey:   "sk-from-settings",
+		Timeout:       time.Minute,
+		GiteaTimeout:  time.Minute,
+	}
+	if _, err := runChatProbe(context.Background(), cfg, console.ChatProbeInput{
+		Reviewer: "codex",
+		Prompt:   "Return OK",
+		BaseURL:  "https://llm.1sir.cc/v1",
+	}); err != nil {
+		t.Fatalf("runChatProbe: %v", err)
+	}
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read codex log: %v", err)
+	}
+	log := string(raw)
+	for _, want := range []string{
+		"CODEX_API_KEY=sk-from-settings",
+		"model_providers.codex_gitea.base_url=\"https://llm.1sir.cc/v1\"",
+		"model_providers.codex_gitea.env_key=\"CODEX_API_KEY\"",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("probe missing temporary base URL auth value %q:\n%s", want, log)
+		}
 	}
 }
