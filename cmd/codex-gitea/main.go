@@ -143,7 +143,7 @@ func main() {
 				CodexHome:          snap.CodexHome,
 				Model:              snap.Model,
 				ReasoningEffort:    snap.CodexReasoningEffort,
-				BaseURL:            snap.CodexBaseURL,
+				BaseURL:            codexBaseURLForDirectMode(snap),
 				APIKey:             codexAPIKeyForMode(snap),
 				CCSwitchConfigDir:  snap.CCSwitchConfigDir,
 				UseCCSwitch:        snap.CodexAuthMode == config.AuthModeCCSwitch,
@@ -199,7 +199,7 @@ func buildReviewers(cfg *config.Config) []model.Reviewer {
 		CodexHome:          cfg.CodexHome,
 		Model:              cfg.Model,
 		ReasoningEffort:    cfg.CodexReasoningEffort,
-		BaseURL:            cfg.CodexBaseURL,
+		BaseURL:            codexBaseURLForDirectMode(cfg),
 		APIKey:             codexAPIKeyForMode(cfg),
 		CCSwitchConfigDir:  cfg.CCSwitchConfigDir,
 		UseCCSwitch:        cfg.CodexAuthMode == config.AuthModeCCSwitch,
@@ -248,14 +248,17 @@ func runChatProbe(ctx context.Context, cfg *config.Config, in console.ChatProbeI
 	case "", "codex":
 		modelName := firstNonEmpty(in.Model, cfg.Model)
 		reasoning := firstNonEmpty(in.ReasoningEffort, cfg.CodexReasoningEffort)
-		baseURL := firstNonEmpty(in.BaseURL, cfg.CodexBaseURL)
+		baseURL := ""
+		if cfg.CodexAuthMode != config.AuthModeCCSwitch {
+			baseURL = firstNonEmpty(in.BaseURL, cfg.CodexBaseURL)
+		}
 		providerID := firstNonEmpty(in.ProviderID, codexProviderForMode(cfg))
 		runner := codex.New(codex.Options{
 			CodexHome:          cfg.CodexHome,
 			Model:              modelName,
 			ReasoningEffort:    reasoning,
 			BaseURL:            baseURL,
-			APIKey:             codexAPIKeyForBaseURL(cfg, baseURL),
+			APIKey:             codexAPIKeyForMode(cfg),
 			CCSwitchConfigDir:  cfg.CCSwitchConfigDir,
 			UseCCSwitch:        cfg.CodexAuthMode == config.AuthModeCCSwitch,
 			CCSwitchProviderID: providerID,
@@ -303,17 +306,20 @@ func firstNonEmpty(values ...string) string {
 }
 
 func codexAPIKeyForMode(cfg *config.Config) string {
-	return codexAPIKeyForBaseURL(cfg, "")
-}
-
-func codexAPIKeyForBaseURL(cfg *config.Config, baseURL string) string {
 	if cfg == nil {
 		return ""
 	}
-	if cfg.CodexAuthMode == config.AuthModeAPIKey || strings.TrimSpace(cfg.CodexBaseURL) != "" || strings.TrimSpace(baseURL) != "" {
+	if cfg.CodexAuthMode == config.AuthModeAPIKey {
 		return cfg.CodexAPIKey
 	}
 	return ""
+}
+
+func codexBaseURLForDirectMode(cfg *config.Config) string {
+	if cfg == nil || cfg.CodexAuthMode == config.AuthModeCCSwitch {
+		return ""
+	}
+	return cfg.CodexBaseURL
 }
 
 func codexProviderForMode(cfg *config.Config) string {

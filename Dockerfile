@@ -22,16 +22,16 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
 # ---------- runtime stage ----------
 FROM debian:bookworm-slim AS runtime
 ARG CC_SWITCH_VERSION=5.8.6
+ARG CODEX_CLI_VERSION=0.142.5
 
 # git: gitcache mirrors/worktrees. node: runs the codex CLI. ca-certs+curl: TLS + healthcheck.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git ca-certificates curl gnupg gosu \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    # Pin the codex CLI. NOTE: spiked behavior (thread.started event id,
-    # generic `codex exec` honoring --output-schema, resume) verified on 0.133.0;
-    # re-verify if you bump this.
-    && npm install -g @openai/codex@0.135.0 @anthropic-ai/claude-code \
+    # Pin the codex CLI so cc-switch generated Codex config is interpreted
+    # consistently by the runtime image.
+    && npm install -g @openai/codex@${CODEX_CLI_VERSION} @anthropic-ai/claude-code \
     && arch="$(dpkg --print-architecture)" \
     && case "$arch" in \
         amd64) cc_arch="linux-x64-musl"; cc_sha256="6b6d7d163d64355e5d0d047244fa6a7538b54cc5017d9c2eb97bf9babd339978" ;; \

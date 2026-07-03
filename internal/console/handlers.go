@@ -454,6 +454,7 @@ func (c *Console) chatProbeDebug(in ChatProbeInput) map[string]any {
 		"model":               strings.TrimSpace(in.Model),
 		"reasoning_effort":    strings.TrimSpace(in.ReasoningEffort),
 		"configured_base_url": "",
+		"auth_route":          in.Reviewer,
 		"api_key_set":         false,
 		"api_key_fingerprint": "",
 	}
@@ -463,9 +464,12 @@ func (c *Console) chatProbeDebug(in ChatProbeInput) map[string]any {
 	switch in.Reviewer {
 	case "codex":
 		debug["configured_base_url"] = cfg.CodexBaseURL
+		debug["auth_route"] = cfg.CodexAuthMode
 		debug["api_key_set"] = strings.TrimSpace(cfg.CodexAPIKey) != ""
 		debug["api_key_fingerprint"] = secretFingerprint(cfg.CodexAPIKey)
-		if debug["base_url"] == "" {
+		if cfg.CodexAuthMode == config.AuthModeCCSwitch {
+			debug["direct_base_url_used"] = false
+		} else if debug["base_url"] == "" {
 			debug["base_url"] = cfg.CodexBaseURL
 		}
 	case "claude":

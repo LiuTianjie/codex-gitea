@@ -159,18 +159,25 @@ printf '%s\n' '{"type":"turn.completed"}'
 		t.Fatalf("probe inherited danger-full-access sandbox:\n%s", log)
 	}
 	for _, want := range []string{
-		"CODEX_API_KEY=sk-from-settings",
-		"model_provider=\"codex_gitea\"",
-		"model_providers.codex_gitea.base_url=\"https://llm.1sir.cc/v1\"",
-		"model_providers.codex_gitea.env_key=\"CODEX_API_KEY\"",
+		"CODEX_API_KEY=\n",
 	} {
 		if !strings.Contains(log, want) {
-			t.Fatalf("probe missing configured Codex provider value %q:\n%s", want, log)
+			t.Fatalf("probe should leave direct API key unset in ccswitch mode, missing %q:\n%s", want, log)
+		}
+	}
+	for _, unwanted := range []string{
+		"CODEX_API_KEY=sk-from-settings",
+		"model_provider=\"codex_gitea\"",
+		"model_providers.codex_gitea.base_url=",
+		"model_providers.codex_gitea.env_key=",
+	} {
+		if strings.Contains(log, unwanted) {
+			t.Fatalf("probe should not inject direct Codex provider config in ccswitch mode, found %q:\n%s", unwanted, log)
 		}
 	}
 }
 
-func TestRunChatProbeCodexUsesAPIKeyWithTemporaryBaseURL(t *testing.T) {
+func TestRunChatProbeCodexUsesAPIKeyWithTemporaryBaseURLInAPIKeyMode(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "codex.log")
 	binDir := t.TempDir()
 	binPath := filepath.Join(binDir, "codex-stub.sh")
@@ -196,7 +203,7 @@ printf '%s\n' '{"type":"turn.completed"}'
 	t.Setenv("CODEX_STUB_LOG", logPath)
 
 	cfg := &config.Config{
-		CodexAuthMode: config.AuthModeCCSwitch,
+		CodexAuthMode: config.AuthModeAPIKey,
 		CodexAPIKey:   "sk-from-settings",
 		Timeout:       time.Minute,
 		GiteaTimeout:  time.Minute,
