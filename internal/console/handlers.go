@@ -409,6 +409,15 @@ func normalizeOpenAIBaseURL(raw string) string {
 	return raw
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
 func (c *Console) handleChatProbe(w http.ResponseWriter, r *http.Request) {
 	if c.chatProbe == nil {
 		writeError(w, http.StatusServiceUnavailable, "chat probe is not configured")
@@ -434,6 +443,7 @@ func (c *Console) handleChatProbe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "prompt is required")
 		return
 	}
+	c.resolveChatProbeProvider(r.Context(), &in)
 	start := time.Now()
 	out, err := c.chatProbe(r.Context(), in)
 	elapsed := time.Since(start)
@@ -455,6 +465,27 @@ func (c *Console) handleChatProbe(w http.ResponseWriter, r *http.Request) {
 		"elapsed_ms": elapsed.Milliseconds(),
 		"debug":      debug,
 	})
+}
+
+func (c *Console) resolveChatProbeProvider(ctx context.Context, in *ChatProbeInput) {
+	if in == nil || in.Reviewer != "codex" || strings.TrimSpace(in.ProviderID) != "" {
+		return
+	}
+	cfg := c.currentConfig()
+	if cfg == nil || cfg.CodexAuthMode != config.AuthModeCCSwitch {
+		return
+	}
+	targetBaseURL := normalizeOpenAIBaseURL(firstNonEmpty(in.BaseURL, cfg.CodexBaseURL))
+	if targetBaseURL == "" {
+		return
+	}
+	options := c.buildCCSwitchCodexOptions(ctx)
+	for _, provider := range options.Providers {
+		if normalizeOpenAIBaseURL(provider.BaseURL) == targetBaseURL {
+			in.ProviderID = provider.ID
+			return
+		}
+	}
 }
 
 func (c *Console) chatProbeDebug(in ChatProbeInput) map[string]any {

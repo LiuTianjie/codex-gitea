@@ -135,6 +135,62 @@ func TestChatProbe(t *testing.T) {
 	}
 }
 
+func TestChatProbeResolvesCodexProviderFromBaseURL(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "console.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	ccDir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(ccDir, "cc-switch.db"))
+	if err != nil {
+		t.Fatalf("open cc-switch db: %v", err)
+	}
+	defer db.Close()
+	_, err = db.Exec(`
+CREATE TABLE providers (
+  id TEXT NOT NULL,
+  app_type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  settings_config TEXT NOT NULL,
+  is_current BOOLEAN NOT NULL DEFAULT 0,
+  PRIMARY KEY (id, app_type)
+);
+CREATE TABLE model_pricing (
+  model_id TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL
+);
+INSERT INTO providers (id, app_type, name, settings_config, is_current)
+VALUES
+  ('default', 'codex', 'Default', '{"base_url":"https://api.openai.com/v1"}', 1),
+  ('llm-1sir', 'codex', '1sir', '{"base_url":"https://llm.1sir.cc/v1"}', 0);
+`)
+	if err != nil {
+		t.Fatalf("seed cc-switch db: %v", err)
+	}
+
+	cfg := &config.Config{
+		AdminPassword:     testPassword,
+		CodexAuthMode:     config.AuthModeCCSwitch,
+		CCSwitchConfigDir: ccDir,
+		CodexBaseURL:      "https://llm.1sir.cc/v1",
+	}
+	var got ChatProbeInput
+	c := New(st, cfg, filepath.Join(t.TempDir(), "codex-home"), ChatProbeFunc(func(_ context.Context, in ChatProbeInput) (string, error) {
+		got = in
+		return "pong", nil
+	}))
+
+	w := do(t, c.Routes(), "POST", "/admin/api/chat-probe", `{"reviewer":"codex","prompt":"ping","model":"gpt-5.5","base_url":"https://llm.1sir.cc/v1","provider_id":"","reasoning_effort":"high"}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	if got.ProviderID != "llm-1sir" {
+		t.Fatalf("ProviderID = %q, want llm-1sir", got.ProviderID)
+	}
+}
+
 func TestCCSwitchCodexOptionsReadProvidersAndModels(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "console.db"))
 	if err != nil {
