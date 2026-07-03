@@ -430,18 +430,48 @@ func (r *Runner) ccSwitchStatus(ctx context.Context) (string, error) {
 }
 
 func (r *Runner) applyProvider(ctx context.Context) error {
-	if strings.TrimSpace(r.ccProvider) == "" {
-		return nil
+	providerID := strings.TrimSpace(r.ccProvider)
+	if providerID == "" {
+		if !r.useCCSwitch {
+			return nil
+		}
+		current, err := r.runCommand(ctx, "", r.ccBin, []string{"--app", "codex", "provider", "current"}, "")
+		if err != nil {
+			return fmt.Errorf("cc-switch codex provider current: %w", err)
+		}
+		providerID = parseCCSwitchCurrentProviderID(string(current))
+		if providerID == "" {
+			return fmt.Errorf("cc-switch codex provider current: could not parse provider id")
+		}
 	}
-	_, err := r.runCommand(ctx, "", r.ccBin, []string{"--app", "codex", "provider", "switch", r.ccProvider}, "")
+	_, err := r.runCommand(ctx, "", r.ccBin, []string{"--app", "codex", "provider", "switch", providerID}, "")
 	if err != nil {
 		return fmt.Errorf("cc-switch codex provider switch: %w", err)
 	}
 	return nil
 }
 
+func parseCCSwitchCurrentProviderID(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if id, ok := strings.CutPrefix(line, "ID:"); ok {
+			return strings.TrimSpace(id)
+		}
+		if id, ok := strings.CutPrefix(line, "id:"); ok {
+			return strings.TrimSpace(id)
+		}
+	}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToLower(line), "current provider:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "current provider:"))
+		}
+	}
+	return ""
+}
+
 func (r *Runner) runWithProvider(ctx context.Context, dir string, args []string, stdin string) ([]byte, error) {
-	if strings.TrimSpace(r.ccProvider) == "" {
+	if !r.useCCSwitch && strings.TrimSpace(r.ccProvider) == "" {
 		return r.runCommand(ctx, dir, r.bin, args, stdin)
 	}
 	providerMu.Lock()

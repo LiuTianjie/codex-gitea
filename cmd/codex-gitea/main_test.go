@@ -133,8 +133,27 @@ printf '%s\n' '{"type":"turn.completed"}'
 	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write codex stub: %v", err)
 	}
+	ccSwitchPath := filepath.Join(binDir, "cc-switch")
+	ccSwitchScript := `#!/bin/sh
+if [ "$1" = "--app" ] && [ "$2" = "codex" ] && [ "$3" = "provider" ] && [ "$4" = "current" ]; then
+  echo "Current Provider"
+  echo "Basic Info"
+  echo "  ID: codex-relay"
+  exit 0
+fi
+if [ "$1" = "--app" ] && [ "$2" = "codex" ] && [ "$3" = "provider" ] && [ "$4" = "switch" ]; then
+  echo "switched $5"
+  exit 0
+fi
+echo "unexpected cc-switch args: $*" >&2
+exit 1
+`
+	if err := os.WriteFile(ccSwitchPath, []byte(ccSwitchScript), 0o755); err != nil {
+		t.Fatalf("write cc-switch stub: %v", err)
+	}
 	t.Setenv("CODEX_BIN", binPath)
 	t.Setenv("CODEX_STUB_LOG", logPath)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	cfg := &config.Config{
 		CodexAuthMode: config.AuthModeCCSwitch,

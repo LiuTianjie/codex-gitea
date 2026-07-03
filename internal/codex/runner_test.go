@@ -96,7 +96,9 @@ func writeCCSwitchStub(t *testing.T, logPath string) string {
 } >> "$STUB_LOG"
 
 if [ "$1" = "--app" ] && [ "$2" = "codex" ] && [ "$3" = "provider" ] && [ "$4" = "current" ]; then
-  echo "current provider: codex-relay"
+  echo "Current Provider"
+  echo "Basic Info"
+  echo "  ID: codex-relay"
   exit 0
 fi
 if [ "$1" = "--app" ] && [ "$2" = "codex" ] && [ "$3" = "env" ] && [ "$4" = "check" ]; then
@@ -260,6 +262,47 @@ func TestRunner_ReviewSwitchesCodexProvider(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(codexHome, "ccswitch-runtime", "auth.json")); !os.IsNotExist(err) {
 		t.Fatalf("ccswitch runtime auth.json should not exist, err=%v", err)
+	}
+}
+
+func TestRunner_ReviewSwitchesCurrentCodexProviderWhenProviderIDEmpty(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "stub.log")
+	writeStub(t, logPath)
+	ccSwitchBin := writeCCSwitchStub(t, logPath)
+
+	r := New(Options{
+		CodexHome:   t.TempDir(),
+		CCSwitchBin: ccSwitchBin,
+		UseCCSwitch: true,
+	})
+
+	if _, err := r.Review(context.Background(), model.CodexInput{
+		Worktree: t.TempDir(),
+		BaseRef:  "main",
+	}); err != nil {
+		t.Fatalf("Review: %v", err)
+	}
+
+	logb, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read stub log: %v", err)
+	}
+	log := string(logb)
+	for _, want := range []string{
+		"CCARG[3]=current",
+		"CCARG[3]=switch",
+		"CCARG[4]=codex-relay",
+		"ARG[0]=exec",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("missing %q in log:\n%s", want, log)
+		}
+	}
+	if strings.Index(log, "CCARG[3]=current") > strings.Index(log, "CCARG[3]=switch") {
+		t.Fatalf("cc-switch current must run before provider switch:\n%s", log)
+	}
+	if strings.Index(log, "CCARG[3]=switch") > strings.Index(log, "ARG[0]=exec") {
+		t.Fatalf("cc-switch provider switch must run before codex exec:\n%s", log)
 	}
 }
 
@@ -478,7 +521,7 @@ func TestRunner_StatusWithCCSwitchProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "cc-switch current:") || !strings.Contains(out, "current provider: codex-relay") {
+	if !strings.Contains(out, "cc-switch current:") || !strings.Contains(out, "ID: codex-relay") {
 		t.Fatalf("Status missing cc-switch current provider:\n%s", out)
 	}
 	if !strings.Contains(out, "cc-switch env:") || !strings.Contains(out, "env ok") {
