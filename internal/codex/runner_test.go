@@ -213,11 +213,16 @@ func TestRunner_ReviewSwitchesCodexProvider(t *testing.T) {
 	writeStub(t, logPath)
 	ccSwitchBin := writeCCSwitchStub(t, logPath)
 	ccSwitchDir := t.TempDir()
+	codexHome := t.TempDir()
+	if err := os.WriteFile(filepath.Join(codexHome, "auth.json"), []byte(`{"tokens":{"refresh_token":"legacy"}}`), 0o600); err != nil {
+		t.Fatalf("write legacy auth.json: %v", err)
+	}
 
 	r := New(Options{
-		CodexHome:          t.TempDir(),
+		CodexHome:          codexHome,
 		CCSwitchBin:        ccSwitchBin,
 		CCSwitchConfigDir:  ccSwitchDir,
+		UseCCSwitch:        true,
 		CCSwitchProviderID: "codex-relay",
 	})
 
@@ -240,6 +245,7 @@ func TestRunner_ReviewSwitchesCodexProvider(t *testing.T) {
 		"CCARG[2]=provider",
 		"CCARG[3]=switch",
 		"CCARG[4]=codex-relay",
+		"CODEX_HOME=" + filepath.Join(codexHome, "ccswitch-runtime"),
 		"ARG[0]=exec",
 	} {
 		if !strings.Contains(log, want) {
@@ -248,6 +254,12 @@ func TestRunner_ReviewSwitchesCodexProvider(t *testing.T) {
 	}
 	if strings.Index(log, "CCARG[3]=switch") > strings.Index(log, "ARG[0]=exec") {
 		t.Fatalf("cc-switch provider switch must run before codex exec:\n%s", log)
+	}
+	if _, err := os.Stat(filepath.Join(codexHome, "auth.json")); err != nil {
+		t.Fatalf("legacy auth.json should be left in place for authfile mode: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(codexHome, "ccswitch-runtime", "auth.json")); !os.IsNotExist(err) {
+		t.Fatalf("ccswitch runtime auth.json should not exist, err=%v", err)
 	}
 }
 
@@ -474,7 +486,7 @@ func TestRunner_StatusWithCCSwitchProvider(t *testing.T) {
 	}
 }
 
-func TestRunner_StatusShowsConfiguredProviderBeforeCCSwitchCurrent(t *testing.T) {
+func TestRunner_StatusWithCCSwitchIgnoresDirectProviderConfig(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "stub.log")
 	writeStub(t, logPath)
 	ccSwitchBin := writeCCSwitchStub(t, logPath)
@@ -492,19 +504,15 @@ func TestRunner_StatusShowsConfiguredProviderBeforeCCSwitchCurrent(t *testing.T)
 		t.Fatalf("Status: %v\n%s", err, out)
 	}
 	for _, want := range []string{
-		"codex configured provider:",
-		"Base URL: https://llm.1sir.cc/v1",
-		"API key: set",
-		"Model: gpt-5.5",
-		"Reasoning effort: high",
 		"cc-switch current:",
+		"cc-switch env:",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("Status missing %q:\n%s", want, out)
 		}
 	}
-	if strings.Index(out, "codex configured provider:") > strings.Index(out, "cc-switch current:") {
-		t.Fatalf("configured provider should be shown before cc-switch current:\n%s", out)
+	if strings.Contains(out, "codex configured provider:") || strings.Contains(out, "Base URL: https://llm.1sir.cc") {
+		t.Fatalf("ccswitch status should not report direct provider config:\n%s", out)
 	}
 }
 

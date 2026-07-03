@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -155,7 +156,7 @@ func (r *Runner) env() []string {
 		out = append(out, kv)
 	}
 	if r.codexHome != "" {
-		out = append(out, "CODEX_HOME="+r.codexHome)
+		out = append(out, "CODEX_HOME="+r.effectiveCodexHome())
 	}
 	if r.apiKey != "" {
 		out = append(out, "CODEX_API_KEY="+r.apiKey)
@@ -164,6 +165,32 @@ func (r *Runner) env() []string {
 		out = append(out, "CC_SWITCH_CONFIG_DIR="+r.ccDir)
 	}
 	return out
+}
+
+func (r *Runner) effectiveCodexHome() string {
+	if !r.useCCSwitch {
+		return r.codexHome
+	}
+	if strings.TrimSpace(r.codexHome) == "" {
+		return ""
+	}
+	return filepath.Join(r.codexHome, "ccswitch-runtime")
+}
+
+func (r *Runner) prepareCodexHome() error {
+	home := strings.TrimSpace(r.effectiveCodexHome())
+	if home == "" {
+		return nil
+	}
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return fmt.Errorf("prepare codex home: %w", err)
+	}
+	if r.useCCSwitch {
+		if err := os.Remove(filepath.Join(home, "auth.json")); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove ccswitch auth.json: %w", err)
+		}
+	}
+	return nil
 }
 
 // reviewBaseArgs returns the flags shared by new and resume reviews.
@@ -327,8 +354,7 @@ func validUTF8Prompt(prompt string) string {
 // Status reports codex auth state by running `codex login status`.
 func (r *Runner) Status(ctx context.Context) (string, error) {
 	if r.useCCSwitch || strings.TrimSpace(r.ccProvider) != "" {
-		status, err := r.ccSwitchStatus(ctx)
-		return r.withConfiguredProviderStatus(status), err
+		return r.ccSwitchStatus(ctx)
 	}
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
@@ -429,6 +455,9 @@ func (r *Runner) runWithProvider(ctx context.Context, dir string, args []string,
 var providerMu sync.Mutex
 
 func (r *Runner) runCommand(ctx context.Context, dir, bin string, args []string, stdin string) ([]byte, error) {
+	if err := r.prepareCodexHome(); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	var stdout, stderr bytes.Buffer

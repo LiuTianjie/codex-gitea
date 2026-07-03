@@ -344,6 +344,7 @@ func (c *Console) handleEffectiveConfig(w http.ResponseWriter, r *http.Request) 
 		"codex_reasoning_effort":      cfg.CodexReasoningEffort,
 		"codex_base_url":              cfg.CodexBaseURL,
 		"codex_auth_mode":             cfg.CodexAuthMode,
+		"codex_home_effective":        effectiveCodexHome(cfg),
 		"codex_api_key_set":           strings.TrimSpace(cfg.CodexAPIKey) != "",
 		"codex_api_key_fingerprint":   secretFingerprint(cfg.CodexAPIKey),
 		"codex_cc_switch_provider_id": cfg.CodexCCSwitchProvider,
@@ -368,6 +369,16 @@ func (c *Console) handleEffectiveConfig(w http.ResponseWriter, r *http.Request) 
 		"config_source":               os.Getenv("CONFIG_SOURCE"),
 		"runtime_reload_note":         "保存设置会写入数据库；后续 review 会热生效 Gitea token/timeout、Webhook 密钥、触发关键词、仓库白名单和 reviewer 配置；监听地址和 worker 并发仍需重启服务。",
 	})
+}
+
+func effectiveCodexHome(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	if cfg.CodexAuthMode == config.AuthModeCCSwitch && strings.TrimSpace(cfg.CodexHome) != "" {
+		return filepath.Join(cfg.CodexHome, "ccswitch-runtime")
+	}
+	return cfg.CodexHome
 }
 
 func secretFingerprint(value string) string {
