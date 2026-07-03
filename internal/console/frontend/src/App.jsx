@@ -14,9 +14,11 @@ import {
   Download,
   ExternalLink,
   LoaderCircle,
+  MessageSquare,
   RefreshCw,
   RotateCcw,
   Save,
+  Send,
   Settings,
   Sparkles,
   Users,
@@ -114,6 +116,7 @@ const SETTING_META = {
 
 const TABS = [
   { id: 'jobs', label: '任务', icon: Activity },
+  { id: 'chat', label: '对话', icon: MessageSquare },
   { id: 'analytics', label: '分析', icon: BarChart3 },
   { id: 'skills', label: 'Skill', icon: BookOpen },
   { id: 'config', label: '配置', icon: Settings }
@@ -241,6 +244,7 @@ function App() {
 
       <main>
         {activeTab === 'jobs' ? <JobsPanel /> : null}
+        {activeTab === 'chat' ? <ChatProbePanel /> : null}
         {activeTab === 'analytics' ? <AnalyticsPanel /> : null}
         {activeTab === 'skills' ? <SkillsPanel /> : null}
         {activeTab === 'config' ? <ConfigPanel /> : null}
@@ -1266,6 +1270,195 @@ function SourceLink({ baseURL, finding, actionLabel = '打开', prominent = fals
   )
 }
 
+function reviewerDefaults(settings, reviewer) {
+  switch (reviewer) {
+    case 'claude':
+      return {
+        model: settings.claude_model || '',
+        base_url: settings.claude_base_url || '',
+        provider_id: settings.cc_switch_provider_id || '',
+        reasoning_effort: ''
+      }
+    case 'minimax':
+      return {
+        model: settings.minimax_model || '',
+        base_url: settings.minimax_base_url || '',
+        provider_id: settings.minimax_provider_id || '',
+        reasoning_effort: ''
+      }
+    case 'codex':
+    default:
+      return {
+        model: settings.model || '',
+        base_url: settings.codex_base_url || '',
+        provider_id: settings.codex_cc_switch_provider_id || '',
+        reasoning_effort: settings.codex_reasoning_effort || ''
+      }
+  }
+}
+
+function ChatProbePanel() {
+  const [settings, setSettings] = useState(() => ({ ...DEFAULT_SETTINGS }))
+  const [ccSwitchOptions, setCCSwitchOptions] = useState(null)
+  const [form, setForm] = useState(() => ({
+    reviewer: 'codex',
+    model: '',
+    base_url: '',
+    provider_id: '',
+    reasoning_effort: 'high',
+    prompt: 'Return exactly: OK'
+  }))
+  const [message, setMessage] = useState(null)
+  const [reply, setReply] = useState(null)
+  const [loading, setLoading] = useState(false)
+
+  const loadProbeDefaults = useCallback(async () => {
+    try {
+      const [settingsPayload, optionsPayload] = await Promise.all([
+        fetchJSON('/admin/api/settings', {}, 10000),
+        fetchJSON('/admin/api/cc-switch/codex-options', {}, 10000)
+      ])
+      const nextSettings = { ...DEFAULT_SETTINGS, ...settingsPayload }
+      setSettings(nextSettings)
+      setCCSwitchOptions(optionsPayload)
+      setForm((current) => ({ ...current, ...reviewerDefaults(nextSettings, current.reviewer) }))
+      setMessage(null)
+    } catch (error) {
+      setMessage({ ok: false, text: `加载对话配置失败：${error.message}` })
+    }
+  }, [])
+
+  useEffect(() => {
+    loadProbeDefaults()
+  }, [loadProbeDefaults])
+
+  const modelOptions = useMemo(() => {
+    if (form.reviewer === 'codex') {
+      return uniqueValues([form.model, settings.model, ...(ccSwitchOptions?.models || []).map((item) => item.id)])
+    }
+    if (form.reviewer === 'claude') return uniqueValues([form.model, settings.claude_model])
+    return uniqueValues([form.model, settings.minimax_model])
+  }, [form.reviewer, form.model, settings, ccSwitchOptions])
+
+  const providerOptions = useMemo(() => {
+    if (form.reviewer === 'codex') {
+      return uniqueValues([form.provider_id, settings.codex_cc_switch_provider_id, ...(ccSwitchOptions?.providers || []).map((item) => item.id)])
+    }
+    if (form.reviewer === 'claude') return uniqueValues([form.provider_id, settings.cc_switch_provider_id])
+    return uniqueValues([form.provider_id, settings.minimax_provider_id])
+  }, [form.reviewer, form.provider_id, settings, ccSwitchOptions])
+
+  const baseURLOptions = useMemo(() => {
+    if (form.reviewer === 'codex') {
+      return uniqueValues([form.base_url, settings.codex_base_url, ...(ccSwitchOptions?.providers || []).map((item) => item.base_url)])
+    }
+    if (form.reviewer === 'claude') return uniqueValues([form.base_url, settings.claude_base_url])
+    return uniqueValues([form.base_url, settings.minimax_base_url])
+  }, [form.reviewer, form.base_url, settings, ccSwitchOptions])
+
+  const setProbeField = (key, value) => {
+    if (key === 'reviewer') {
+      setForm((current) => ({ ...current, reviewer: value, ...reviewerDefaults(settings, value) }))
+      setReply(null)
+      return
+    }
+    setForm((current) => ({ ...current, [key]: value }))
+  }
+
+  const sendProbe = async () => {
+    if (!form.prompt.trim()) {
+      setMessage({ ok: false, text: '请输入要发送的内容' })
+      return
+    }
+    setLoading(true)
+    setReply(null)
+    try {
+      const payload = await fetchJSON('/admin/api/chat-probe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form)
+      }, 120000)
+      setReply(payload)
+      setMessage(payload.ok ? { ok: true, text: `调用完成（${payload.elapsed_ms || 0}ms）` } : { ok: false, text: `调用失败：${payload.error || 'unknown error'}` })
+    } catch (error) {
+      setMessage({ ok: false, text: `调用失败：${error.message}` })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <section className="panel">
+      <div className="section-head">
+        <div>
+          <h2>对话</h2>
+          <p>临时选择 reviewer 和模型参数，直接验证当前通道能否调用。</p>
+        </div>
+        <div className="toolbar">
+          <IconButton icon={RefreshCw} onClick={loadProbeDefaults} disabled={loading}>刷新配置</IconButton>
+          <IconButton icon={loading ? LoaderCircle : Send} className={loading ? 'busy' : ''} onClick={sendProbe} disabled={loading}>{loading ? '发送中' : '发送'}</IconButton>
+        </div>
+      </div>
+
+      <Message message={message} />
+
+      <section className="config-group chat-probe">
+        <div className="form-grid chat-controls">
+          <label className="field">
+            <span>Reviewer</span>
+            <select value={form.reviewer} onChange={(event) => setProbeField('reviewer', event.target.value)}>
+              <option value="codex">codex</option>
+              <option value="claude">claude</option>
+              <option value="minimax">minimax</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Model</span>
+            <input list="chat-model-options" value={form.model} onChange={(event) => setProbeField('model', event.target.value)} placeholder="model id" />
+            <datalist id="chat-model-options">{modelOptions.map((item) => <option key={item} value={item} />)}</datalist>
+          </label>
+          <label className="field">
+            <span>Base URL</span>
+            <input list="chat-base-url-options" value={form.base_url} onChange={(event) => setProbeField('base_url', event.target.value)} placeholder="https://relay.example.com/v1" />
+            <datalist id="chat-base-url-options">{baseURLOptions.map((item) => <option key={item} value={item} />)}</datalist>
+          </label>
+          <label className="field">
+            <span>Provider</span>
+            <input list="chat-provider-options" value={form.provider_id} onChange={(event) => setProbeField('provider_id', event.target.value)} placeholder="cc-switch provider id" />
+            <datalist id="chat-provider-options">{providerOptions.map((item) => <option key={item} value={item} />)}</datalist>
+          </label>
+          {form.reviewer === 'codex' ? (
+            <label className="field">
+              <span>思考强度</span>
+              <select value={form.reasoning_effort} onChange={(event) => setProbeField('reasoning_effort', event.target.value)}>
+                <option value="">cc-switch/provider 默认</option>
+                {DEFAULT_REASONING_EFFORTS.map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+            </label>
+          ) : null}
+        </div>
+
+        <label className="field chat-prompt">
+          <span>消息</span>
+          <textarea value={form.prompt} onChange={(event) => setProbeField('prompt', event.target.value)} />
+        </label>
+
+        {reply ? (
+          <div className="chat-result">
+            <div className="group-head">
+              <div>
+                <h3>{reply.ok ? '模型响应' : '错误'}</h3>
+                <p>{reply.reviewer || form.reviewer} · {reply.elapsed_ms || 0}ms</p>
+              </div>
+            </div>
+            <pre className="status-box">{reply.ok ? (reply.output || '(empty)') : (reply.error || JSON.stringify(reply, null, 2))}</pre>
+          </div>
+        ) : null}
+      </section>
+    </section>
+  )
+}
+
 function ConfigPanel() {
   const [settings, setSettings] = useState(() => ({ ...DEFAULT_SETTINGS }))
   const [effectiveConfig, setEffectiveConfig] = useState(null)
@@ -1317,7 +1510,10 @@ function ConfigPanel() {
       const payload = await fetchJSON('/admin/api/cc-switch/codex-options/fetch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider_id: settings.codex_cc_switch_provider_id || '' })
+        body: JSON.stringify({
+          provider_id: settings.codex_cc_switch_provider_id || '',
+          base_url: settings.codex_base_url || ''
+        })
       }, 70000)
       setCCSwitchOptions(payload)
       setSettingsMessage({ ok: true, text: '已从 cc-switch 获取 Codex 模型列表' })
@@ -1326,7 +1522,7 @@ function ConfigPanel() {
     } finally {
       setFetchingModels(false)
     }
-  }, [settings.codex_cc_switch_provider_id])
+  }, [settings.codex_base_url, settings.codex_cc_switch_provider_id])
 
   useEffect(() => {
     loadSettings()

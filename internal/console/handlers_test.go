@@ -102,6 +102,39 @@ func TestNoAuthRedirectsToLogin(t *testing.T) {
 	}
 }
 
+func TestChatProbe(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "console.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	cfg := &config.Config{AdminPassword: testPassword}
+	var got ChatProbeInput
+	c := New(st, cfg, filepath.Join(t.TempDir(), "codex-home"), ChatProbeFunc(func(_ context.Context, in ChatProbeInput) (string, error) {
+		got = in
+		return "pong", nil
+	}))
+
+	w := do(t, c.Routes(), "POST", "/admin/api/chat-probe", `{"reviewer":"codex","prompt":"ping","model":"gpt-5.5","base_url":"https://relay.example.com/v1","provider_id":"codex-relay","reasoning_effort":"high"}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	var body struct {
+		OK     bool   `json:"ok"`
+		Output string `json:"output"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("parse body: %v\n%s", err, w.Body.String())
+	}
+	if !body.OK || body.Output != "pong" {
+		t.Fatalf("body = %+v", body)
+	}
+	if got.Reviewer != "codex" || got.Prompt != "ping" || got.Model != "gpt-5.5" || got.BaseURL != "https://relay.example.com/v1" || got.ProviderID != "codex-relay" || got.ReasoningEffort != "high" {
+		t.Fatalf("probe input = %+v", got)
+	}
+}
+
 func TestCCSwitchCodexOptionsReadProvidersAndModels(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "console.db"))
 	if err != nil {
@@ -222,7 +255,7 @@ echo "fetched"
 
 	cfg := &config.Config{AdminPassword: testPassword, CCSwitchConfigDir: ccDir}
 	c := New(st, cfg, filepath.Join(t.TempDir(), "codex-home"))
-	w := do(t, c.Routes(), "POST", "/admin/api/cc-switch/codex-options/fetch", `{"provider_id":"codex-relay"}`, true)
+	w := do(t, c.Routes(), "POST", "/admin/api/cc-switch/codex-options/fetch", `{"provider_id":"codex-relay","base_url":"https://codex-relay.example.com/v1"}`, true)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}
@@ -248,7 +281,83 @@ echo "fetched"
 		"ARG[1]=codex",
 		"ARG[2]=provider",
 		"ARG[3]=fetch-models",
-		"ARG[4]=codex-relay",
+		"ARG[4]=--base-url",
+		"ARG[5]=https://codex-relay.example.com/v1",
+		"ARG[6]=codex-relay",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("missing %q in log:\n%s", want, log)
+		}
+	}
+}
+
+func TestCCSwitchCodexFetchModelsFallsBackToCurrentProvider(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "console.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	ccDir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(ccDir, "cc-switch.db"))
+	if err != nil {
+		t.Fatalf("open cc-switch db: %v", err)
+	}
+	_, err = db.Exec(`
+CREATE TABLE providers (
+  id TEXT NOT NULL,
+  app_type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  settings_config TEXT NOT NULL,
+  is_current BOOLEAN NOT NULL DEFAULT 0,
+  PRIMARY KEY (id, app_type)
+);
+CREATE TABLE model_pricing (
+  model_id TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL
+);
+INSERT INTO providers (id, app_type, name, settings_config, is_current)
+VALUES ('codex-current', 'codex', 'Current Codex', '{"base_url":"https://current.example.com/v1","config":"model = \"gpt-5.5\""}', 1);
+`)
+	if err != nil {
+		t.Fatalf("seed cc-switch db: %v", err)
+	}
+	db.Close()
+
+	logPath := filepath.Join(t.TempDir(), "cc-switch.log")
+	binDir := t.TempDir()
+	binPath := filepath.Join(binDir, "cc-switch")
+	script := `#!/bin/sh
+{
+  i=0
+  for a in "$@"; do
+    echo "ARG[$i]=$a"
+    i=$((i+1))
+  done
+} >> "$CC_SWITCH_STUB_LOG"
+echo "fetched current"
+`
+	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write cc-switch stub: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CC_SWITCH_STUB_LOG", logPath)
+
+	cfg := &config.Config{AdminPassword: testPassword, CCSwitchConfigDir: ccDir}
+	c := New(st, cfg, filepath.Join(t.TempDir(), "codex-home"))
+	w := do(t, c.Routes(), "POST", "/admin/api/cc-switch/codex-options/fetch", `{}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	logb, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read cc-switch log: %v", err)
+	}
+	log := string(logb)
+	for _, want := range []string{
+		"ARG[4]=--base-url",
+		"ARG[5]=https://current.example.com/v1",
+		"ARG[6]=codex-current",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("missing %q in log:\n%s", want, log)

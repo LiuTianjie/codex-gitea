@@ -159,6 +159,25 @@ func (r *Runner) Ask(ctx context.Context, sessionID, worktree, question string) 
 	return parseTextOutput(out)
 }
 
+func (r *Runner) GenerateText(ctx context.Context, worktree, prompt string) (string, error) {
+	args := []string{
+		"--print",
+		"--output-format", "json",
+		"--permission-mode", "dontAsk",
+		"--tools", "",
+	}
+	args = r.appendBudgetArg(args)
+	if r.model != "" {
+		args = append(args, "--model", r.model)
+	}
+	args = append(args, prompt)
+	out, err := r.runWithProvider(ctx, worktree, r.bin, args, "")
+	if err != nil {
+		return "", err
+	}
+	return parseTextOutput(out)
+}
+
 func (r *Runner) appendBudgetArg(args []string) []string {
 	if r.maxBudgetUSD <= 0 {
 		return args

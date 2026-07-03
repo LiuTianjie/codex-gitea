@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -152,6 +153,9 @@ func main() {
 			})
 			return runner.GenerateText(ctx, os.TempDir(), console.BuildProjectSkillPrompt(in))
 		}),
+		console.ChatProbeFunc(func(ctx context.Context, in console.ChatProbeInput) (string, error) {
+			return runChatProbe(ctx, configSnapshot(), in)
+		}),
 	)
 
 	root := http.NewServeMux()
@@ -230,6 +234,72 @@ func buildReviewers(cfg *config.Config) []model.Reviewer {
 		}))
 	}
 	return reviewers
+}
+
+func runChatProbe(ctx context.Context, cfg *config.Config, in console.ChatProbeInput) (string, error) {
+	if cfg == nil {
+		return "", errors.New("config is unavailable")
+	}
+	prompt := strings.TrimSpace(in.Prompt)
+	if prompt == "" {
+		return "", errors.New("prompt is required")
+	}
+	switch strings.ToLower(strings.TrimSpace(in.Reviewer)) {
+	case "", "codex":
+		modelName := firstNonEmpty(in.Model, cfg.Model)
+		reasoning := firstNonEmpty(in.ReasoningEffort, cfg.CodexReasoningEffort)
+		baseURL := firstNonEmpty(in.BaseURL, cfg.CodexBaseURL)
+		providerID := firstNonEmpty(in.ProviderID, codexProviderForMode(cfg))
+		runner := codex.New(codex.Options{
+			CodexHome:          cfg.CodexHome,
+			Model:              modelName,
+			ReasoningEffort:    reasoning,
+			BaseURL:            baseURL,
+			APIKey:             codexAPIKeyForMode(cfg),
+			CCSwitchConfigDir:  cfg.CCSwitchConfigDir,
+			UseCCSwitch:        cfg.CodexAuthMode == config.AuthModeCCSwitch,
+			CCSwitchProviderID: providerID,
+			SandboxMode:        config.SandboxReadOnly,
+			Timeout:            cfg.Timeout,
+		})
+		return runner.GenerateText(ctx, os.TempDir(), prompt)
+	case "claude":
+		runner := claude.New(claude.Options{
+			Model:             firstNonEmpty(in.Model, cfg.ClaudeModel),
+			APIKey:            cfg.ClaudeAPIKey,
+			BaseURL:           firstNonEmpty(in.BaseURL, cfg.ClaudeBaseURL),
+			ClaudeHome:        cfg.ClaudeHome,
+			CCSwitchConfigDir: cfg.CCSwitchConfigDir,
+			CCSwitchProvider:  firstNonEmpty(in.ProviderID, cfg.CCSwitchProvider),
+			Timeout:           cfg.Timeout,
+			MaxBudgetUSD:      cfg.ClaudeMaxBudgetUSD,
+		})
+		return runner.GenerateText(ctx, os.TempDir(), prompt)
+	case "minimax":
+		runner := claude.New(claude.Options{
+			Name:              "minimax",
+			Model:             firstNonEmpty(in.Model, cfg.MiniMaxModel),
+			APIKey:            cfg.MiniMaxAPIKey,
+			BaseURL:           firstNonEmpty(in.BaseURL, cfg.MiniMaxBaseURL),
+			ClaudeHome:        cfg.ClaudeHome,
+			CCSwitchConfigDir: cfg.CCSwitchConfigDir,
+			CCSwitchProvider:  firstNonEmpty(in.ProviderID, cfg.MiniMaxProvider),
+			Timeout:           cfg.Timeout,
+			MaxBudgetUSD:      cfg.MiniMaxMaxBudgetUSD,
+		})
+		return runner.GenerateText(ctx, os.TempDir(), prompt)
+	default:
+		return "", fmt.Errorf("unsupported reviewer: %s", in.Reviewer)
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func codexAPIKeyForMode(cfg *config.Config) string {

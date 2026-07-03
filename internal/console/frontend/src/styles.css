@@ -171,13 +171,19 @@ h3 {
 .toolbar select,
 .field input,
 .field select,
+.field textarea,
 .file-input {
-  height: 38px;
   border: 1px solid #d6d6d1;
   border-radius: 7px;
   background: #fff;
   color: #202020;
   box-shadow: 0 1px 2px rgba(20, 20, 20, 0.04);
+}
+
+.field input,
+.field select,
+.file-input {
+  height: 38px;
 }
 
 .button {
@@ -1291,9 +1297,35 @@ button.log-pill:hover {
 }
 
 .field input,
-.field select {
+.field select,
+.field textarea {
   width: 100%;
   padding: 0 11px;
+}
+
+.field textarea {
+  min-height: 132px;
+  padding: 11px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.chat-probe {
+  display: grid;
+  gap: 16px;
+}
+
+.chat-controls {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.chat-prompt {
+  display: block;
+}
+
+.chat-result {
+  display: grid;
+  gap: 10px;
 }
 
 .file-input {

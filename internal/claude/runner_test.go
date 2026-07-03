@@ -345,3 +345,28 @@ func TestRunnerStatusReportsSmokeAPIError(t *testing.T) {
 		t.Fatalf("status missing concise smoke API error:\n%s", status)
 	}
 }
+
+func TestRunnerGenerateTextDisablesTools(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "claude.log")
+	bin := writeClaudeStub(t, logPath)
+	r := New(Options{Bin: bin, Model: "sonnet"})
+	if _, err := r.GenerateText(context.Background(), t.TempDir(), "Return exactly OK."); err != nil {
+		t.Fatalf("GenerateText: %v", err)
+	}
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	log := string(raw)
+	for _, want := range []string{
+		"ARG[0]=--print",
+		"ARG[5]=--tools",
+		"ARG[6]=",
+		"ARG[7]=--model",
+		"ARG[8]=sonnet",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("missing %q in log:\n%s", want, log)
+		}
+	}
+}

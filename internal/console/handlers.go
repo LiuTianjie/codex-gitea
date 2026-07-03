@@ -42,6 +42,17 @@ type SettingsApplyFunc func(context.Context, map[string]string) error
 
 type SkillGeneratorFunc func(context.Context, model.SkillGenerationInput) (string, error)
 
+type ChatProbeInput struct {
+	Reviewer        string `json:"reviewer"`
+	Prompt          string `json:"prompt"`
+	Model           string `json:"model"`
+	BaseURL         string `json:"base_url"`
+	ProviderID      string `json:"provider_id"`
+	ReasoningEffort string `json:"reasoning_effort"`
+}
+
+type ChatProbeFunc func(context.Context, ChatProbeInput) (string, error)
+
 // Console serves the authenticated admin panel and its JSON API.
 type Console struct {
 	store           model.Store
@@ -52,6 +63,7 @@ type Console struct {
 	statusProvider  StatusProvider
 	onSettingsApply SettingsApplyFunc
 	skillGenerator  SkillGeneratorFunc
+	chatProbe       ChatProbeFunc
 	skillTasksMu    sync.Mutex
 	skillTasks      map[string]*skillGenerationTask
 }
@@ -75,6 +87,8 @@ func New(store model.Store, cfg *config.Config, codexHome string, statusArgs ...
 			c.onSettingsApply = v
 		case SkillGeneratorFunc:
 			c.skillGenerator = v
+		case ChatProbeFunc:
+			c.chatProbe = v
 		}
 	}
 	return c
@@ -115,6 +129,7 @@ func (c *Console) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/api/authfile", c.handlePostAuthFile)
 	mux.HandleFunc("GET /admin/api/status", c.handleStatus)
 	mux.HandleFunc("GET /admin/api/effective-config", c.handleEffectiveConfig)
+	mux.HandleFunc("POST /admin/api/chat-probe", c.handleChatProbe)
 	mux.HandleFunc("GET /admin/api/cc-switch/codex-options", c.handleCCSwitchCodexOptions)
 	mux.HandleFunc("POST /admin/api/cc-switch/codex-options/fetch", c.handleFetchCCSwitchCodexModels)
 	mux.HandleFunc("GET /admin/api/jobs", c.handleJobs)
@@ -352,6 +367,51 @@ func (c *Console) handleEffectiveConfig(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func (c *Console) handleChatProbe(w http.ResponseWriter, r *http.Request) {
+	if c.chatProbe == nil {
+		writeError(w, http.StatusServiceUnavailable, "chat probe is not configured")
+		return
+	}
+	var in ChatProbeInput
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		return
+	}
+	in.Reviewer = strings.ToLower(strings.TrimSpace(in.Reviewer))
+	if in.Reviewer == "" {
+		in.Reviewer = "codex"
+	}
+	switch in.Reviewer {
+	case "codex", "claude", "minimax":
+	default:
+		writeError(w, http.StatusBadRequest, "unsupported reviewer: "+in.Reviewer)
+		return
+	}
+	in.Prompt = strings.TrimSpace(in.Prompt)
+	if in.Prompt == "" {
+		writeError(w, http.StatusBadRequest, "prompt is required")
+		return
+	}
+	start := time.Now()
+	out, err := c.chatProbe(r.Context(), in)
+	elapsed := time.Since(start)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":         false,
+			"reviewer":   in.Reviewer,
+			"error":      err.Error(),
+			"elapsed_ms": elapsed.Milliseconds(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":         true,
+		"reviewer":   in.Reviewer,
+		"output":     out,
+		"elapsed_ms": elapsed.Milliseconds(),
+	})
+}
+
 type ccSwitchCodexProviderView struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
@@ -382,6 +442,7 @@ func (c *Console) handleCCSwitchCodexOptions(w http.ResponseWriter, r *http.Requ
 
 type ccSwitchFetchModelsPayload struct {
 	ProviderID string `json:"provider_id"`
+	BaseURL    string `json:"base_url"`
 }
 
 func (c *Console) handleFetchCCSwitchCodexModels(w http.ResponseWriter, r *http.Request) {
@@ -395,10 +456,41 @@ func (c *Console) handleFetchCCSwitchCodexModels(w http.ResponseWriter, r *http.
 	if cfg != nil && strings.TrimSpace(cfg.CCSwitchConfigDir) != "" {
 		ccDir = strings.TrimSpace(cfg.CCSwitchConfigDir)
 	}
-	args := []string{"--app", "codex", "provider", "fetch-models"}
-	if providerID := strings.TrimSpace(p.ProviderID); providerID != "" {
-		args = append(args, providerID)
+	options := c.buildCCSwitchCodexOptions(r.Context())
+	providerID := strings.TrimSpace(p.ProviderID)
+	if providerID == "" && cfg != nil {
+		providerID = strings.TrimSpace(cfg.CodexCCSwitchProvider)
 	}
+	if providerID == "" {
+		for _, provider := range options.Providers {
+			if provider.Current {
+				providerID = provider.ID
+				break
+			}
+		}
+	}
+	baseURL := strings.TrimSpace(p.BaseURL)
+	if baseURL == "" && cfg != nil {
+		baseURL = strings.TrimSpace(cfg.CodexBaseURL)
+	}
+	if baseURL == "" {
+		for _, provider := range options.Providers {
+			if provider.ID == providerID || (providerID == "" && provider.Current) {
+				baseURL = strings.TrimSpace(provider.BaseURL)
+				break
+			}
+		}
+	}
+	if providerID == "" {
+		writeError(w, http.StatusBadRequest, "cc-switch fetch-models requires a Codex provider id; select a provider or set the current Codex provider in cc-switch")
+		return
+	}
+	if baseURL == "" {
+		writeError(w, http.StatusBadRequest, "cc-switch fetch-models requires a Codex base URL")
+		return
+	}
+
+	args := []string{"--app", "codex", "provider", "fetch-models", "--base-url", baseURL, providerID}
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "cc-switch", args...)

@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/turning4th/codex-gitea/internal/config"
+	"github.com/turning4th/codex-gitea/internal/console"
 	"github.com/turning4th/codex-gitea/internal/model"
 	"github.com/turning4th/codex-gitea/internal/store"
 )
@@ -105,5 +108,51 @@ func TestReadyzConfigWarnings(t *testing.T) {
 	}
 	if resp.OK || !resp.DBOK || len(resp.ConfigWarnings) == 0 {
 		t.Fatalf("readyz warnings response = %+v", resp)
+	}
+}
+
+func TestRunChatProbeCodexForcesReadOnlySandbox(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "codex.log")
+	binDir := t.TempDir()
+	binPath := filepath.Join(binDir, "codex-stub.sh")
+	script := `#!/bin/sh
+stdin_payload="$(cat)"
+{
+  i=0
+  for a in "$@"; do
+    echo "ARG[$i]=$a"
+    i=$((i+1))
+  done
+  echo "STDIN=${stdin_payload}"
+} >> "$CODEX_STUB_LOG"
+printf '%s\n' '{"type":"thread.started","thread_id":"probe-thread"}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"OK"}}'
+printf '%s\n' '{"type":"turn.completed"}'
+`
+	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write codex stub: %v", err)
+	}
+	t.Setenv("CODEX_BIN", binPath)
+	t.Setenv("CODEX_STUB_LOG", logPath)
+
+	cfg := &config.Config{
+		CodexAuthMode: config.AuthModeAuthFile,
+		CodexSandbox:  config.SandboxDangerFullAccess,
+		Timeout:       time.Minute,
+		GiteaTimeout:  time.Minute,
+	}
+	if _, err := runChatProbe(context.Background(), cfg, console.ChatProbeInput{Reviewer: "codex", Prompt: "Return OK"}); err != nil {
+		t.Fatalf("runChatProbe: %v", err)
+	}
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read codex log: %v", err)
+	}
+	log := string(raw)
+	if !strings.Contains(log, "sandbox_mode=read-only") {
+		t.Fatalf("probe did not force read-only sandbox:\n%s", log)
+	}
+	if strings.Contains(log, "sandbox_mode=danger-full-access") {
+		t.Fatalf("probe inherited danger-full-access sandbox:\n%s", log)
 	}
 }
