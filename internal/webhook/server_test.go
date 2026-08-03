@@ -311,6 +311,35 @@ func TestServerInvalidSignatureRejected(t *testing.T) {
 	}
 }
 
+func TestServerSignedPushProbeIsAcknowledgedWithoutEvent(t *testing.T) {
+	const secret = "shh"
+	called := false
+	h := NewHandler(secret, func(_ context.Context, _ *model.WebhookEvent) error {
+		called = true
+		return nil
+	})
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	body := []byte(`{"ref":"refs/heads/main"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/webhook", strings.NewReader(string(body)))
+	req.Header.Set(headerEvent, "push")
+	req.Header.Set(headerSignature, sign(body, secret))
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if called {
+		t.Errorf("OnEvent must not be called for a push connectivity probe")
+	}
+}
+
 func TestServerDynamicSecret(t *testing.T) {
 	secret := "old-secret"
 	called := 0

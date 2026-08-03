@@ -101,6 +101,14 @@ func (h *Handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if eventType == "" {
 		eventType = r.Header.Get(headerEvent)
 	}
+	// Gitea's "Test Delivery" action always sends a synthetic push event,
+	// even when the hook is configured only for pull requests and comments.
+	// Acknowledge that connectivity probe without creating a review job.
+	if eventType == "push" {
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "ok")
+		return
+	}
 	ev, err := Parse(eventType, body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
