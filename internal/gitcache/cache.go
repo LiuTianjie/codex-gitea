@@ -97,6 +97,12 @@ func (c *Cache) Prepare(ctx context.Context, pr model.PRRef, cloneURL, baseRef, 
 		if err := c.runGit(ctx, true, "clone", "--mirror", cloneURL, mirror); err != nil {
 			return "", fmt.Errorf("gitcache: clone mirror %s: %w", pr.Key(), err)
 		}
+	} else {
+		// The repository URL can change when Gitea moves to a new host or port.
+		// A persisted mirror otherwise keeps fetching its original URL forever.
+		if err := c.runGit(ctx, false, "-C", mirror, "remote", "set-url", "origin", cloneURL); err != nil {
+			return "", fmt.Errorf("gitcache: update origin %s: %w", pr.Key(), err)
+		}
 	}
 
 	// 2. Incremental sync. A --mirror clone sets remote.origin.mirror=true

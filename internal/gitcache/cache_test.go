@@ -103,11 +103,19 @@ func TestPrepareCleanupRoundTrip(t *testing.T) {
 		}
 	}
 
-	// Second Prepare hits the "mirror already exists" path and rebuilds the
-	// worktree; must still succeed with the same content.
+	// Simulate a Gitea migration leaving the persisted mirror on an obsolete
+	// origin. The next Prepare must reconcile it with the webhook clone URL
+	// before fetching.
+	gitOK(t, mirror, "remote", "set-url", "origin", "file:///obsolete-gitea/widgets.git")
+
+	// Second Prepare hits the "mirror already exists" path, repairs origin,
+	// and rebuilds the worktree with the same content.
 	wt2, err := c.Prepare(ctx, pr, cloneURL, baseRef, "refs/pull/1/head", headSHA)
 	if err != nil {
 		t.Fatalf("second Prepare: %v", err)
+	}
+	if got := gitOK(t, mirror, "remote", "get-url", "origin"); got != cloneURL {
+		t.Fatalf("origin URL = %q, want %q", got, cloneURL)
 	}
 	if wt2 != wantWT {
 		t.Fatalf("second worktree path = %q, want %q", wt2, wantWT)
