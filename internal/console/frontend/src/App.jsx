@@ -571,7 +571,7 @@ const EMPTY_ANALYSIS_CONFIG = {
   sls_endpoint: '', sls_project: '', sls_logstore: '',
   sls_access_key_id: '', sls_access_key_secret: '',
   feishu_mode: 'webhook', feishu_webhook: '', feishu_app_id: '', feishu_app_secret: '', feishu_chat_id: '',
-  model: '', reasoning_effort: 'high', timeout_seconds: 1800,
+  model: '', reasoning_effort: 'high', concurrency: 2, timeout_seconds: 1800,
   log_window_seconds: 180, prompt: '', throttle_enabled: true,
   throttle_threshold: 1, throttle_cooldown_seconds: 0,
   throttle_fields: 'method,endpoint,error_code,error_message'
@@ -875,6 +875,7 @@ function AnalysisConfigsPanel() {
           <ConfigSection title="分析模型">
             <AnalysisField label="模型（留空复用全局）" value={form.model} onChange={(v) => setField('model', v)} />
             <AnalysisField label="思考强度" value={form.reasoning_effort} onChange={(v) => setField('reasoning_effort', v)} />
+            <AnalysisField label="此配置并发数（1-16）" value={form.concurrency} type="number" onChange={(v) => setField('concurrency', Number(v))} />
             <AnalysisField label="超时（秒）" value={form.timeout_seconds} type="number" onChange={(v) => setField('timeout_seconds', Number(v))} />
           </ConfigSection>
           <ConfigSection title="连续相同告警节流">

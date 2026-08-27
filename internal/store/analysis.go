@@ -41,6 +41,9 @@ func normalizeAnalysisConfig(c *model.AnalysisConfig) {
 	if c.RepositoryRef == "" {
 		c.RepositoryRef = "main"
 	}
+	if c.Concurrency <= 0 {
+		c.Concurrency = model.DefaultAnalysisConcurrency
+	}
 	if c.TimeoutSeconds <= 0 {
 		c.TimeoutSeconds = 1800
 	}
@@ -70,6 +73,9 @@ func validateAnalysisConfig(c model.AnalysisConfig) error {
 	}
 	if strings.TrimSpace(c.SLSAccessKeyID) == "" || strings.TrimSpace(c.SLSAccessKeySecret) == "" {
 		return errors.New("SLS access key id and secret are required")
+	}
+	if c.Concurrency < 1 || c.Concurrency > model.MaxAnalysisConcurrency {
+		return fmt.Errorf("analysis concurrency must be between 1 and %d", model.MaxAnalysisConcurrency)
 	}
 	switch c.FeishuMode {
 	case "webhook":
@@ -136,13 +142,13 @@ func (s *Store) CreateAnalysisConfig(ctx context.Context, c *model.AnalysisConfi
 	res, err := s.db.ExecContext(ctx, `INSERT INTO alert_analysis_configs(
 		name,enabled,version,repository_url,repository_ref,sls_endpoint,sls_project,sls_logstore,
 		sls_access_key_id,sls_access_key_secret,feishu_mode,feishu_webhook,feishu_app_id,feishu_app_secret,feishu_chat_id,
-		model,reasoning_effort,timeout_seconds,
+		model,reasoning_effort,concurrency,timeout_seconds,
 		log_window_seconds,prompt,throttle_enabled,throttle_threshold,throttle_cooldown_seconds,
 		throttle_fields,ingest_token_hash,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		c.Name, boolInt(c.Enabled), 1, c.RepositoryURL, c.RepositoryRef, c.SLSEndpoint,
 		c.SLSProject, c.SLSLogstore, akID, akSecret, c.FeishuMode, feishu, c.FeishuAppID, feishuAppSecret, c.FeishuChatID,
-		c.Model, c.ReasoningEffort,
+		c.Model, c.ReasoningEffort, c.Concurrency,
 		c.TimeoutSeconds, c.LogWindowSeconds, c.Prompt, boolInt(c.ThrottleEnabled),
 		c.ThrottleThreshold, c.ThrottleCooldownSecs, c.ThrottleFields, c.IngestTokenHash, now, now)
 	if err != nil {
@@ -183,11 +189,11 @@ func (s *Store) UpdateAnalysisConfig(ctx context.Context, c *model.AnalysisConfi
 		name=?,enabled=?,version=version+1,repository_url=?,repository_ref=?,sls_endpoint=?,
 		sls_project=?,sls_logstore=?,sls_access_key_id=?,sls_access_key_secret=?,feishu_mode=?,feishu_webhook=?,
 		feishu_app_id=?,feishu_app_secret=?,feishu_chat_id=?,
-		model=?,reasoning_effort=?,timeout_seconds=?,log_window_seconds=?,prompt=?,throttle_enabled=?,
+		model=?,reasoning_effort=?,concurrency=?,timeout_seconds=?,log_window_seconds=?,prompt=?,throttle_enabled=?,
 		throttle_threshold=?,throttle_cooldown_seconds=?,throttle_fields=?,updated_at=? WHERE id=?`,
 		c.Name, boolInt(c.Enabled), c.RepositoryURL, c.RepositoryRef, c.SLSEndpoint, c.SLSProject,
 		c.SLSLogstore, akID, akSecret, c.FeishuMode, feishu, c.FeishuAppID, feishuAppSecret, c.FeishuChatID,
-		c.Model, c.ReasoningEffort, c.TimeoutSeconds,
+		c.Model, c.ReasoningEffort, c.Concurrency, c.TimeoutSeconds,
 		c.LogWindowSeconds, c.Prompt, boolInt(c.ThrottleEnabled), c.ThrottleThreshold,
 		c.ThrottleCooldownSecs, c.ThrottleFields, nowRFC3339(), c.ID)
 	if err != nil {
@@ -228,7 +234,7 @@ func (s *Store) GetAnalysisConfig(ctx context.Context, id int64) (*model.Analysi
 const analysisConfigSelect = `SELECT id,name,enabled,version,repository_url,repository_ref,
 	sls_endpoint,sls_project,sls_logstore,sls_access_key_id,sls_access_key_secret,feishu_mode,feishu_webhook,
 	feishu_app_id,feishu_app_secret,feishu_chat_id,
-	model,reasoning_effort,timeout_seconds,log_window_seconds,prompt,throttle_enabled,
+	model,reasoning_effort,concurrency,timeout_seconds,log_window_seconds,prompt,throttle_enabled,
 	throttle_threshold,throttle_cooldown_seconds,throttle_fields,ingest_token_hash,created_at,updated_at
 	FROM alert_analysis_configs`
 
@@ -241,7 +247,7 @@ func (s *Store) scanAnalysisConfig(row rowScanner) (*model.AnalysisConfig, error
 	if err := row.Scan(&c.ID, &c.Name, &enabled, &c.Version, &c.RepositoryURL, &c.RepositoryRef,
 		&c.SLSEndpoint, &c.SLSProject, &c.SLSLogstore, &akID, &akSecret, &c.FeishuMode, &feishu,
 		&c.FeishuAppID, &feishuAppSecret, &c.FeishuChatID,
-		&c.Model, &c.ReasoningEffort, &c.TimeoutSeconds, &c.LogWindowSeconds, &c.Prompt,
+		&c.Model, &c.ReasoningEffort, &c.Concurrency, &c.TimeoutSeconds, &c.LogWindowSeconds, &c.Prompt,
 		&throttle, &c.ThrottleThreshold, &c.ThrottleCooldownSecs, &c.ThrottleFields,
 		&c.IngestTokenHash, &created, &updated); err != nil {
 		return nil, err
@@ -436,8 +442,20 @@ func applyAnalysisThrottle(ctx context.Context, tx *sql.Tx, cfg model.AnalysisCo
 func (s *Store) ClaimAnalysisTask(ctx context.Context) (*model.AnalysisTask, error) {
 	var id int64
 	err := s.db.QueryRowContext(ctx, `UPDATE analysis_tasks SET status=?,phase=?,attempts=attempts+1,started_at=?,finished_at=NULL,error='',error_type=''
-		WHERE id=(SELECT id FROM analysis_tasks WHERE status=? ORDER BY id LIMIT 1) RETURNING id`,
-		string(model.AnalysisTaskRunning), "starting", nowRFC3339(), string(model.AnalysisTaskQueued)).Scan(&id)
+		WHERE id=(
+			SELECT queued.id
+			FROM analysis_tasks queued
+			LEFT JOIN alert_analysis_configs config ON config.id=queued.config_id
+			WHERE queued.status=? AND (
+				queued.config_id IS NULL OR config.id IS NULL OR
+				(SELECT COUNT(*) FROM analysis_tasks active
+				 WHERE active.config_id=queued.config_id AND active.status IN (?,?)) < config.concurrency
+			)
+			ORDER BY queued.id
+			LIMIT 1
+		) RETURNING id`,
+		string(model.AnalysisTaskRunning), "starting", nowRFC3339(), string(model.AnalysisTaskQueued),
+		string(model.AnalysisTaskRunning), string(model.AnalysisTaskCancelRequested)).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

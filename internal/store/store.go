@@ -161,6 +161,7 @@ func migrateSchema(db *sql.DB) error {
 		{table: "alert_analysis_configs", name: "feishu_app_id", def: "TEXT NOT NULL DEFAULT ''"},
 		{table: "alert_analysis_configs", name: "feishu_app_secret", def: "TEXT NOT NULL DEFAULT ''"},
 		{table: "alert_analysis_configs", name: "feishu_chat_id", def: "TEXT NOT NULL DEFAULT ''"},
+		{table: "alert_analysis_configs", name: "concurrency", def: "INTEGER NOT NULL DEFAULT 2"},
 		{table: "analysis_tasks", name: "feishu_message_id", def: "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := ensureColumn(db, col.table, col.name, col.def); err != nil {

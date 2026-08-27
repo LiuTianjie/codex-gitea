@@ -24,7 +24,8 @@ func TestAnalysisConfigAppSecretIsRedactedAndPreservedOnUpdate(t *testing.T) {
 		"repository_url":"https://gitea.example.com/serverx.git","repository_ref":"main",
 		"sls_endpoint":"cn-beijing.log.aliyuncs.com","sls_project":"project","sls_logstore":"raw",
 		"sls_access_key_id":"ak-id","sls_access_key_secret":"ak-secret",
-		"feishu_mode":"app","feishu_app_id":"cli_test","feishu_app_secret":"app-secret","feishu_chat_id":"oc_old"
+		"feishu_mode":"app","feishu_app_id":"cli_test","feishu_app_secret":"app-secret","feishu_chat_id":"oc_old",
+		"concurrency":4
 	}`
 	w := do(t, h, http.MethodPost, "/admin/api/alert-analysis/configs", createBody, true)
 	if w.Code != http.StatusCreated {
@@ -39,6 +40,9 @@ func TestAnalysisConfigAppSecretIsRedactedAndPreservedOnUpdate(t *testing.T) {
 	if created.Config["feishu_app_secret"] != redacted {
 		t.Fatalf("app secret response=%v, want redacted", created.Config["feishu_app_secret"])
 	}
+	if created.Config["concurrency"] != float64(4) {
+		t.Fatalf("concurrency response=%v, want 4", created.Config["concurrency"])
+	}
 	id, ok := created.Config["id"].(float64)
 	if !ok || id <= 0 {
 		t.Fatalf("created config id=%v", created.Config["id"])
@@ -49,7 +53,8 @@ func TestAnalysisConfigAppSecretIsRedactedAndPreservedOnUpdate(t *testing.T) {
 		"repository_url":"https://gitea.example.com/serverx.git","repository_ref":"main",
 		"sls_endpoint":"cn-beijing.log.aliyuncs.com","sls_project":"project","sls_logstore":"raw",
 		"sls_access_key_id":"***set***","sls_access_key_secret":"***set***",
-		"feishu_mode":"app","feishu_app_id":"cli_test","feishu_app_secret":"***set***","feishu_chat_id":"oc_new"
+		"feishu_mode":"app","feishu_app_id":"cli_test","feishu_app_secret":"***set***","feishu_chat_id":"oc_new",
+		"concurrency":3
 	}`
 	w = do(t, h, http.MethodPut, "/admin/api/alert-analysis/configs/1", updateBody, true)
 	if w.Code != http.StatusOK {
@@ -59,7 +64,7 @@ func TestAnalysisConfigAppSecretIsRedactedAndPreservedOnUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.FeishuAppSecret != "app-secret" || stored.FeishuChatID != "oc_new" {
-		t.Fatalf("stored app config secret=%q chat=%q", stored.FeishuAppSecret, stored.FeishuChatID)
+	if stored.FeishuAppSecret != "app-secret" || stored.FeishuChatID != "oc_new" || stored.Concurrency != 3 {
+		t.Fatalf("stored app config secret=%q chat=%q concurrency=%d", stored.FeishuAppSecret, stored.FeishuChatID, stored.Concurrency)
 	}
 }

@@ -256,6 +256,10 @@ modes, optional model/prompt overrides, and a duplicate-alert throttle. App-bot
 mode stores an App ID, encrypted App Secret, and target Chat ID; webhook mode
 stores an encrypted custom-bot webhook. Repository checkout reuses the global
 `GITEA_TOKEN`; there is no second Gitea token in an alert configuration.
+Each alert configuration also has its own analysis concurrency (default `2`,
+range `1-16`). The scheduler enforces that limit independently, so a busy test
+configuration does not consume the production configuration's own slots; the
+service-wide safety cap is 16 simultaneous alert analyses.
 
 Creating or rotating a configuration returns its full receiver URL once. Add a
 second HTTP action after the existing Feishu alert action and POST structured

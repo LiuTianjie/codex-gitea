@@ -97,6 +97,73 @@ func TestAnalysisConfigEncryptsFeishuAppSecret(t *testing.T) {
 	}
 }
 
+func TestAnalysisTaskClaimHonorsConcurrencyPerConfig(t *testing.T) {
+	ctx := context.Background()
+	s := openAnalysisTestStore(t)
+
+	one := analysisTestConfig("one-token")
+	one.Name = "one"
+	one.Concurrency = 1
+	one.ThrottleEnabled = false
+	oneCreated, err := s.CreateAnalysisConfig(ctx, &one)
+	if err != nil {
+		t.Fatal(err)
+	}
+	two := analysisTestConfig("two-token")
+	two.Name = "two"
+	two.Concurrency = 2
+	two.ThrottleEnabled = false
+	twoCreated, err := s.CreateAnalysisConfig(ctx, &two)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	enqueue := func(cfg model.AnalysisConfig, delivery string) {
+		t.Helper()
+		if _, created, err := s.EnqueueAnalysisTask(ctx, cfg, model.AlertEnvelope{Endpoint: "/" + delivery}, delivery, delivery); err != nil || !created {
+			t.Fatalf("enqueue %s: created=%v err=%v", delivery, created, err)
+		}
+	}
+	enqueue(*oneCreated, "one-1")
+	enqueue(*oneCreated, "one-2")
+	enqueue(*twoCreated, "two-1")
+	enqueue(*twoCreated, "two-2")
+
+	first, err := s.ClaimAnalysisTask(ctx)
+	if err != nil || first == nil || first.ConfigID == nil || *first.ConfigID != oneCreated.ID {
+		t.Fatalf("first claim=%+v err=%v", first, err)
+	}
+	second, err := s.ClaimAnalysisTask(ctx)
+	if err != nil || second == nil || second.ConfigID == nil || *second.ConfigID != twoCreated.ID {
+		t.Fatalf("second claim=%+v err=%v", second, err)
+	}
+	third, err := s.ClaimAnalysisTask(ctx)
+	if err != nil || third == nil || third.ConfigID == nil || *third.ConfigID != twoCreated.ID {
+		t.Fatalf("third claim=%+v err=%v", third, err)
+	}
+	blocked, err := s.ClaimAnalysisTask(ctx)
+	if err != nil || blocked != nil {
+		t.Fatalf("claim over per-config limits=%+v err=%v", blocked, err)
+	}
+
+	if err := s.FinishAnalysisTask(ctx, first.ID, model.AnalysisTaskSucceeded, `{}`, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	next, err := s.ClaimAnalysisTask(ctx)
+	if err != nil || next == nil || next.ConfigID == nil || *next.ConfigID != oneCreated.ID {
+		t.Fatalf("claim after slot released=%+v err=%v", next, err)
+	}
+}
+
+func TestAnalysisConfigRejectsConcurrencyAboveLimit(t *testing.T) {
+	s := openAnalysisTestStore(t)
+	cfg := analysisTestConfig("too-many")
+	cfg.Concurrency = model.MaxAnalysisConcurrency + 1
+	if _, err := s.CreateAnalysisConfig(context.Background(), &cfg); err == nil {
+		t.Fatal("expected concurrency validation error")
+	}
+}
+
 func TestAnalysisThrottleAnalyzesOnceThenSuppressesDuplicates(t *testing.T) {
 	ctx := context.Background()
 	s := openAnalysisTestStore(t)

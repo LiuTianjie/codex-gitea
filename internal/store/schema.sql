@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS alert_analysis_configs(
   feishu_chat_id TEXT NOT NULL DEFAULT '',
   model TEXT NOT NULL DEFAULT '',
   reasoning_effort TEXT NOT NULL DEFAULT '',
+  concurrency INTEGER NOT NULL DEFAULT 2,
   timeout_seconds INTEGER NOT NULL DEFAULT 1800,
   log_window_seconds INTEGER NOT NULL DEFAULT 180,
   prompt TEXT NOT NULL DEFAULT '',

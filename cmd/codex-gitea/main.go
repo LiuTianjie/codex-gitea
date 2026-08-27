@@ -155,7 +155,9 @@ func main() {
 		},
 		Notifier: incidentNotifier,
 	}
-	incidentQ := incident.NewQueue(st, incidentProcessor, 2, logger)
+	// The database claim enforces each alert config's own concurrency. The
+	// dispatcher uses this value only as the service-wide safety cap.
+	incidentQ := incident.NewQueue(st, incidentProcessor, model.MaxAnalysisConcurrency, logger)
 	incidentHandler := &incident.Handler{Store: st, Wake: incidentQ.Notify}
 
 	// Webhook -> enqueue (fast, then 200).

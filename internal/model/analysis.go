@@ -26,6 +26,11 @@ var (
 	ErrAnalysisTaskTerminal   = errors.New("analysis task is already terminal")
 )
 
+const (
+	DefaultAnalysisConcurrency = 2
+	MaxAnalysisConcurrency     = 16
+)
+
 // AnalysisConfig is one console-managed alert source. Secret fields are
 // plaintext only after the store decrypts them; HTTP responses must redact
 // them before serialization.
@@ -48,6 +53,7 @@ type AnalysisConfig struct {
 	FeishuChatID         string
 	Model                string
 	ReasoningEffort      string
+	Concurrency          int
 	TimeoutSeconds       int
 	LogWindowSeconds     int
 	Prompt               string
@@ -73,6 +79,7 @@ func (c AnalysisConfig) Snapshot() AnalysisConfigSnapshot {
 		SLSLogstore:          c.SLSLogstore,
 		Model:                c.Model,
 		ReasoningEffort:      c.ReasoningEffort,
+		Concurrency:          c.Concurrency,
 		TimeoutSeconds:       c.TimeoutSeconds,
 		LogWindowSeconds:     c.LogWindowSeconds,
 		Prompt:               c.Prompt,
@@ -94,6 +101,7 @@ type AnalysisConfigSnapshot struct {
 	SLSLogstore          string `json:"sls_logstore"`
 	Model                string `json:"model"`
 	ReasoningEffort      string `json:"reasoning_effort"`
+	Concurrency          int    `json:"concurrency"`
 	TimeoutSeconds       int    `json:"timeout_seconds"`
 	LogWindowSeconds     int    `json:"log_window_seconds"`
 	Prompt               string `json:"prompt,omitempty"`

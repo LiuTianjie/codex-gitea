@@ -40,35 +40,36 @@ func (q *Queue) Run(ctx context.Context) error {
 	if err := q.store.RecoverAnalysisTasks(ctx); err != nil {
 		return err
 	}
-	var wg sync.WaitGroup
-	for i := 0; i < q.workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			q.worker(ctx)
-		}()
-	}
-	wg.Wait()
-	return ctx.Err()
-}
-
-func (q *Queue) worker(ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+	done := make(chan struct{}, q.workers)
+	active := 0
+	var wg sync.WaitGroup
 	for {
-		task, err := q.store.ClaimAnalysisTask(ctx)
-		if err != nil {
-			q.logf("claim analysis task: %v", err)
-		}
-		if task != nil {
-			q.run(ctx, task)
-			continue
+		if active < q.workers {
+			task, err := q.store.ClaimAnalysisTask(ctx)
+			if err != nil {
+				q.logf("claim analysis task: %v", err)
+			}
+			if task != nil {
+				active++
+				wg.Add(1)
+				go func(task *model.AnalysisTask) {
+					defer wg.Done()
+					q.run(ctx, task)
+					done <- struct{}{}
+				}(task)
+				continue
+			}
 		}
 		select {
 		case <-ctx.Done():
-			return
+			wg.Wait()
+			return ctx.Err()
 		case <-q.wake:
 		case <-ticker.C:
+		case <-done:
+			active--
 		}
 	}
 }
