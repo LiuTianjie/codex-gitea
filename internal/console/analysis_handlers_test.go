@@ -25,6 +25,7 @@ func TestAnalysisConfigAppSecretIsRedactedAndPreservedOnUpdate(t *testing.T) {
 		"sls_endpoint":"cn-beijing.log.aliyuncs.com","sls_project":"project","sls_logstore":"raw",
 		"sls_access_key_id":"ak-id","sls_access_key_secret":"ak-secret",
 		"feishu_mode":"app","feishu_app_id":"cli_test","feishu_app_secret":"app-secret","feishu_chat_id":"oc_old",
+		"feishu_mention_mapping":"znc,Starslayerx | 张宁池 | ou_123",
 		"concurrency":4
 	}`
 	w := do(t, h, http.MethodPost, "/admin/api/alert-analysis/configs", createBody, true)
@@ -43,6 +44,9 @@ func TestAnalysisConfigAppSecretIsRedactedAndPreservedOnUpdate(t *testing.T) {
 	if created.Config["concurrency"] != float64(4) {
 		t.Fatalf("concurrency response=%v, want 4", created.Config["concurrency"])
 	}
+	if created.Config["feishu_mention_mapping"] != "znc,Starslayerx | 张宁池 | ou_123" {
+		t.Fatalf("mention mapping response=%v", created.Config["feishu_mention_mapping"])
+	}
 	id, ok := created.Config["id"].(float64)
 	if !ok || id <= 0 {
 		t.Fatalf("created config id=%v", created.Config["id"])
@@ -54,6 +58,7 @@ func TestAnalysisConfigAppSecretIsRedactedAndPreservedOnUpdate(t *testing.T) {
 		"sls_endpoint":"cn-beijing.log.aliyuncs.com","sls_project":"project","sls_logstore":"raw",
 		"sls_access_key_id":"***set***","sls_access_key_secret":"***set***",
 		"feishu_mode":"app","feishu_app_id":"cli_test","feishu_app_secret":"***set***","feishu_chat_id":"oc_new",
+		"feishu_mention_mapping":"Lin | 陈惠琳 | ou_456",
 		"concurrency":3
 	}`
 	w = do(t, h, http.MethodPut, "/admin/api/alert-analysis/configs/1", updateBody, true)
@@ -64,7 +69,7 @@ func TestAnalysisConfigAppSecretIsRedactedAndPreservedOnUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.FeishuAppSecret != "app-secret" || stored.FeishuChatID != "oc_new" || stored.Concurrency != 3 {
-		t.Fatalf("stored app config secret=%q chat=%q concurrency=%d", stored.FeishuAppSecret, stored.FeishuChatID, stored.Concurrency)
+	if stored.FeishuAppSecret != "app-secret" || stored.FeishuChatID != "oc_new" || stored.Concurrency != 3 || stored.FeishuMentionMapping != "Lin | 陈惠琳 | ou_456" {
+		t.Fatalf("stored app config secret=%q chat=%q concurrency=%d mentions=%q", stored.FeishuAppSecret, stored.FeishuChatID, stored.Concurrency, stored.FeishuMentionMapping)
 	}
 }

@@ -570,7 +570,7 @@ const EMPTY_ANALYSIS_CONFIG = {
   name: '', enabled: true, repository_url: '', repository_ref: 'main',
   sls_endpoint: '', sls_project: '', sls_logstore: '',
   sls_access_key_id: '', sls_access_key_secret: '',
-  feishu_mode: 'webhook', feishu_webhook: '', feishu_app_id: '', feishu_app_secret: '', feishu_chat_id: '',
+  feishu_mode: 'webhook', feishu_webhook: '', feishu_app_id: '', feishu_app_secret: '', feishu_chat_id: '', feishu_mention_mapping: '',
   model: '', reasoning_effort: 'high', concurrency: 2, timeout_seconds: 1800,
   log_window_seconds: 180, prompt: '', throttle_enabled: true,
   throttle_threshold: 1, throttle_cooldown_seconds: 0,
@@ -872,6 +872,7 @@ function AnalysisConfigsPanel() {
               <AnalysisField label="目标群 Chat ID" value={form.feishu_chat_id} placeholder="oc_xxx" onChange={(v) => setField('feishu_chat_id', v)} />
             </> : <AnalysisField label="群机器人 Webhook" value={form.feishu_webhook} secret onChange={(v) => setField('feishu_webhook', v)} />}
           </ConfigSection>
+          <label className="field full-field"><span>人员映射（每行：Git 标识，多个用逗号 | 姓名 | 飞书 open_id）</span><textarea rows="6" value={form.feishu_mention_mapping || ''} placeholder="Nickname4th | 刘涛 | ou_xxx" onChange={(event) => setField('feishu_mention_mapping', event.target.value)} /></label>
           <ConfigSection title="分析模型">
             <AnalysisField label="模型（留空复用全局）" value={form.model} onChange={(v) => setField('model', v)} />
             <AnalysisField label="思考强度" value={form.reasoning_effort} onChange={(v) => setField('reasoning_effort', v)} />

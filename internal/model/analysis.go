@@ -51,6 +51,7 @@ type AnalysisConfig struct {
 	FeishuAppID          string
 	FeishuAppSecret      string
 	FeishuChatID         string
+	FeishuMentionMapping string
 	Model                string
 	ReasoningEffort      string
 	Concurrency          int
@@ -77,6 +78,7 @@ func (c AnalysisConfig) Snapshot() AnalysisConfigSnapshot {
 		SLSEndpoint:          c.SLSEndpoint,
 		SLSProject:           c.SLSProject,
 		SLSLogstore:          c.SLSLogstore,
+		FeishuMentionMapping: c.FeishuMentionMapping,
 		Model:                c.Model,
 		ReasoningEffort:      c.ReasoningEffort,
 		Concurrency:          c.Concurrency,
@@ -99,6 +101,7 @@ type AnalysisConfigSnapshot struct {
 	SLSEndpoint          string `json:"sls_endpoint"`
 	SLSProject           string `json:"sls_project"`
 	SLSLogstore          string `json:"sls_logstore"`
+	FeishuMentionMapping string `json:"feishu_mention_mapping,omitempty"`
 	Model                string `json:"model"`
 	ReasoningEffort      string `json:"reasoning_effort"`
 	Concurrency          int    `json:"concurrency"`

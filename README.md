@@ -261,6 +261,21 @@ range `1-16`). The scheduler enforces that limit independently, so a busy test
 configuration does not consume the production configuration's own slots; the
 service-wide safety cap is 16 simultaneous alert analyses.
 
+Each alert configuration can also maintain its own Git-author-to-Feishu-user
+mapping. Enter one record per line in the console using this format:
+
+```text
+znc,Starslayerx | 张宁池 | ou_xxx
+Lin | 陈惠琳 | ou_yyy
+```
+
+Aliases are matched case-insensitively against suspect commit authors, commit
+email prefixes, and the model's suggested contacts. Only valid `ou_...` IDs are
+rendered as real Feishu mentions. A successful final card mentions at most three
+matched users; progress, failed, canceled, and duplicate-alert cards never
+mention anyone. The mapping is copied into each task snapshot, so later config
+edits do not change the audit trail for an already-created analysis.
+
 Creating or rotating a configuration returns its full receiver URL once. Add a
 second HTTP action after the existing Feishu alert action and POST structured
 JSON to that URL. The original Feishu action stays unchanged. A minimal payload

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,6 +27,14 @@ type cachedFeishuToken struct {
 	value     string
 	expiresAt time.Time
 }
+
+type feishuMentionEntry struct {
+	Aliases     []string
+	DisplayName string
+	OpenID      string
+}
+
+var validFeishuOpenID = regexp.MustCompile(`^ou_[A-Za-z0-9_-]+$`)
 
 type FeishuNotifier struct {
 	HTTPClient       *http.Client
@@ -297,6 +306,19 @@ func (n *FeishuNotifier) buildCard(task model.AnalysisTask, phase string, result
 				}},
 			})
 		}
+		if phase == "succeeded" {
+			if mentions := resolveFeishuMentions(task.ConfigSnapshot.FeishuMentionMapping, result, 3); len(mentions) > 0 {
+				items := make([]string, 0, len(mentions))
+				for _, mention := range mentions {
+					items = append(items, fmt.Sprintf("<at id=%s></at>", mention.OpenID))
+				}
+				elements = append(elements, map[string]any{
+					"tag":     "markdown",
+					"content": "**建议关注**\n" + strings.Join(items, "、"),
+					"margin":  "0px 0px 12px 0px",
+				})
+			}
+		}
 	}
 	if link := n.taskURL(task.ID); link != "" {
 		elements = append(elements, map[string]any{"tag": "markdown", "content": fmt.Sprintf("[在 Codex-Gitea 控制台查看任务 #%d](%s)", task.ID, link)})
@@ -313,6 +335,119 @@ func (n *FeishuNotifier) buildCard(task model.AnalysisTask, phase string, result
 		},
 		"body": map[string]any{"direction": "vertical", "padding": "12px 12px 20px 12px", "vertical_spacing": "12px", "elements": elements},
 	}
+}
+
+func parseFeishuMentionMapping(raw string) []feishuMentionEntry {
+	entries := make([]feishuMentionEntry, 0)
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "|", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		displayName := strings.TrimSpace(parts[1])
+		openID := strings.TrimSpace(parts[2])
+		if displayName == "" || !validFeishuOpenID.MatchString(openID) {
+			continue
+		}
+		aliases := make([]string, 0)
+		seen := map[string]struct{}{}
+		for _, alias := range strings.Split(parts[0], ",") {
+			alias = normalizeMentionKey(alias)
+			if alias == "" {
+				continue
+			}
+			if _, ok := seen[alias]; ok {
+				continue
+			}
+			seen[alias] = struct{}{}
+			aliases = append(aliases, alias)
+		}
+		if len(aliases) == 0 {
+			continue
+		}
+		entries = append(entries, feishuMentionEntry{Aliases: aliases, DisplayName: displayName, OpenID: openID})
+	}
+	return entries
+}
+
+func resolveFeishuMentions(raw string, result *model.AnalysisResult, limit int) []feishuMentionEntry {
+	if result == nil || limit <= 0 {
+		return nil
+	}
+	entries := parseFeishuMentionMapping(raw)
+	if len(entries) == 0 {
+		return nil
+	}
+	mentions := make([]feishuMentionEntry, 0, min(limit, len(entries)))
+	seenOpenIDs := map[string]struct{}{}
+	appendMatches := func(candidates []string) bool {
+		for _, candidate := range candidates {
+			for _, entry := range entries {
+				if _, ok := seenOpenIDs[entry.OpenID]; ok || !mentionEntryMatches(entry, []string{candidate}) {
+					continue
+				}
+				seenOpenIDs[entry.OpenID] = struct{}{}
+				mentions = append(mentions, entry)
+				if len(mentions) >= limit {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for _, commit := range result.SuspectCommits {
+		candidates := []string{commit.Author}
+		if email := strings.TrimSpace(commit.AuthorEmail); email != "" {
+			if at := strings.IndexByte(email, '@'); at > 0 {
+				email = email[:at]
+			}
+			candidates = append(candidates, email)
+		}
+		if appendMatches(candidates) {
+			return mentions
+		}
+	}
+	appendMatches(result.SuggestedContacts)
+	return mentions
+}
+
+func mentionEntryMatches(entry feishuMentionEntry, candidates []string) bool {
+	nameKey := normalizeMentionKey(entry.DisplayName)
+	for _, candidate := range candidates {
+		candidateKey := normalizeMentionKey(candidate)
+		if candidateKey == "" {
+			continue
+		}
+		if candidateKey == nameKey || (nameKey != "" && strings.Contains(candidateKey, nameKey)) {
+			return true
+		}
+		tokens := mentionCandidateTokens(candidateKey)
+		for _, alias := range entry.Aliases {
+			if candidateKey == alias {
+				return true
+			}
+			for _, token := range tokens {
+				if token == alias {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func mentionCandidateTokens(value string) []string {
+	return strings.FieldsFunc(value, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-')
+	})
+}
+
+func normalizeMentionKey(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func bulletList(values []string, maxItems, maxRunes int) string {

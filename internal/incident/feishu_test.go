@@ -25,7 +25,9 @@ func TestFeishuCardIncludesSourceDetailAndCommit(t *testing.T) {
 	notifier := &FeishuNotifier{ConsoleBaseURL: "https://codex.example.com"}
 	cfg := model.AnalysisConfig{Name: "serverx", FeishuMode: "webhook", FeishuWebhook: server.URL}
 	task := model.AnalysisTask{
-		ID: 12, ConfigName: "serverx", Alert: model.AlertEnvelope{
+		ID: 12, ConfigName: "serverx", ConfigSnapshot: model.AnalysisConfigSnapshot{
+			FeishuMentionMapping: "alice,ali | Alice Zhang | ou_alice123",
+		}, Alert: model.AlertEnvelope{
 			Title: "API 响应异常", Endpoint: "/api/test", TraceID: "trace-1",
 			DetailURL: "https://alerts.example.com/detail/1",
 		},
@@ -40,7 +42,7 @@ func TestFeishuCardIncludesSourceDetailAndCommit(t *testing.T) {
 	}
 	encoded, _ := json.Marshal(payload)
 	text := string(encoded)
-	for _, want := range []string{"查看原告警详情", "https://alerts.example.com/detail/1", "AI 评估严重程度", "高", "核心学习接口连续失败", "练习会话提交", "PROD 用户", "1234567890", "Alice", "analysis_task=12"} {
+	for _, want := range []string{"查看原告警详情", "https://alerts.example.com/detail/1", "AI 评估严重程度", "高", "核心学习接口连续失败", "练习会话提交", "PROD 用户", "1234567890", "Alice", "建议关注", `\u003cat id=ou_alice123\u003e\u003c/at\u003e`, "analysis_task=12"} {
 		if want == "AI 评估严重程度" {
 			want = "严重程度"
 		}
@@ -50,6 +52,77 @@ func TestFeishuCardIncludesSourceDetailAndCommit(t *testing.T) {
 	}
 	if strings.Contains(text, "当前状态") {
 		t.Fatalf("card repeats status in body: %s", text)
+	}
+}
+
+func TestResolveFeishuMentionsMatchesAliasesEmailAndSuggestedContacts(t *testing.T) {
+	mapping := strings.Join([]string{
+		"znc,Starslayerx | 张宁池 | ou_zhang",
+		"Lin | 陈惠琳 | ou_lin",
+		"Nickname4th | 刘涛 | ou_liu",
+		"broken | 无效 | user_123",
+	}, "\n")
+	result := &model.AnalysisResult{
+		SuspectCommits: []model.AnalysisCommitEvidence{
+			{Author: "STARSLAYERX", AuthorEmail: "ignored@example.com"},
+			{Author: "unknown", AuthorEmail: "lin@itool.tech"},
+		},
+		SuggestedContacts: []string{"建议联系刘涛确认模块历史"},
+	}
+	mentions := resolveFeishuMentions(mapping, result, 3)
+	if len(mentions) != 3 {
+		t.Fatalf("mentions=%+v, want 3", mentions)
+	}
+	for index, want := range []string{"ou_zhang", "ou_lin", "ou_liu"} {
+		if mentions[index].OpenID != want {
+			t.Errorf("mentions[%d].OpenID=%q, want %q", index, mentions[index].OpenID, want)
+		}
+	}
+}
+
+func TestResolveFeishuMentionsPrioritizesCommitAuthorsOverSuggestedContacts(t *testing.T) {
+	mapping := strings.Join([]string{
+		"suggested | 建议联系人 | ou_suggested",
+		"commit-author | 提交作者 | ou_commit",
+	}, "\n")
+	result := &model.AnalysisResult{
+		SuspectCommits:    []model.AnalysisCommitEvidence{{Author: "commit-author"}},
+		SuggestedContacts: []string{"suggested"},
+	}
+	mentions := resolveFeishuMentions(mapping, result, 1)
+	if len(mentions) != 1 || mentions[0].OpenID != "ou_commit" {
+		t.Fatalf("mentions=%+v, want commit author first", mentions)
+	}
+}
+
+func TestParseFeishuMentionMappingSkipsInvalidAndDeduplicatesAliases(t *testing.T) {
+	entries := parseFeishuMentionMapping(strings.Join([]string{
+		"znc,ZNC,Starslayerx | 张宁池 | ou_123",
+		"missing columns",
+		"alias | Name | invalid-id",
+		" | Empty | ou_empty",
+	}, "\n"))
+	if len(entries) != 1 {
+		t.Fatalf("entries=%+v, want 1", entries)
+	}
+	if got := strings.Join(entries[0].Aliases, ","); got != "znc,starslayerx" {
+		t.Fatalf("aliases=%q", got)
+	}
+}
+
+func TestFeishuMentionOnlyAppearsOnSuccessfulResultCard(t *testing.T) {
+	notifier := &FeishuNotifier{}
+	task := model.AnalysisTask{ConfigSnapshot: model.AnalysisConfigSnapshot{
+		FeishuMentionMapping: "znc | 张宁池 | ou_123",
+	}}
+	result := &model.AnalysisResult{SuspectCommits: []model.AnalysisCommitEvidence{{Author: "znc"}}}
+	failedCard, _ := json.Marshal(notifier.buildCard(task, "failed", result))
+	if strings.Contains(string(failedCard), `\u003cat id=`) {
+		t.Fatalf("failed card contains mention: %s", failedCard)
+	}
+	succeededCard, _ := json.Marshal(notifier.buildCard(task, "succeeded", result))
+	if !strings.Contains(string(succeededCard), `\u003cat id=ou_123\u003e\u003c/at\u003e`) {
+		t.Fatalf("succeeded card missing mention: %s", succeededCard)
 	}
 }
 

@@ -28,7 +28,8 @@ func analysisTestConfig(token string) model.AnalysisConfig {
 		RepositoryRef: "main", SLSEndpoint: "cn-beijing.log.aliyuncs.com",
 		SLSProject: "project", SLSLogstore: "raw", SLSAccessKeyID: "ak-id",
 		SLSAccessKeySecret: "ak-secret", FeishuWebhook: "https://open.feishu.cn/hook/secret",
-		ThrottleEnabled: true, ThrottleThreshold: 1, ThrottleCooldownSecs: 0,
+		FeishuMentionMapping: "znc,Starslayerx | 张宁池 | ou_123",
+		ThrottleEnabled:      true, ThrottleThreshold: 1, ThrottleCooldownSecs: 0,
 		ThrottleFields:  "method,endpoint,error_code,error_message",
 		IngestTokenHash: hex.EncodeToString(sum[:]),
 	}
@@ -69,6 +70,9 @@ func TestAnalysisConfigSecretsAreEncryptedAndRedeliveriesAreIdempotent(t *testin
 	storedTask, err := s.GetAnalysisTask(ctx, task.ID)
 	if err != nil || storedTask.FeishuMessageID != "om_message" {
 		t.Fatalf("stored message id task=%+v err=%v", storedTask, err)
+	}
+	if storedTask.ConfigSnapshot.FeishuMentionMapping != cfg.FeishuMentionMapping {
+		t.Fatalf("task mention mapping=%q, want %q", storedTask.ConfigSnapshot.FeishuMentionMapping, cfg.FeishuMentionMapping)
 	}
 }
 

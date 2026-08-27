@@ -31,6 +31,7 @@ type analysisConfigPayload struct {
 	FeishuAppID          string `json:"feishu_app_id"`
 	FeishuAppSecret      string `json:"feishu_app_secret"`
 	FeishuChatID         string `json:"feishu_chat_id"`
+	FeishuMentionMapping string `json:"feishu_mention_mapping"`
 	Model                string `json:"model"`
 	ReasoningEffort      string `json:"reasoning_effort"`
 	Concurrency          int    `json:"concurrency"`
@@ -51,7 +52,8 @@ func (p analysisConfigPayload) model() model.AnalysisConfig {
 		SLSAccessKeyID: p.SLSAccessKeyID, SLSAccessKeySecret: p.SLSAccessKeySecret,
 		FeishuMode: p.FeishuMode, FeishuWebhook: p.FeishuWebhook,
 		FeishuAppID: p.FeishuAppID, FeishuAppSecret: p.FeishuAppSecret, FeishuChatID: p.FeishuChatID,
-		Model: p.Model, ReasoningEffort: p.ReasoningEffort, Concurrency: p.Concurrency,
+		FeishuMentionMapping: p.FeishuMentionMapping,
+		Model:                p.Model, ReasoningEffort: p.ReasoningEffort, Concurrency: p.Concurrency,
 		TimeoutSeconds: p.TimeoutSeconds, LogWindowSeconds: p.LogWindowSeconds,
 		Prompt: p.Prompt, ThrottleEnabled: p.ThrottleEnabled,
 		ThrottleThreshold: p.ThrottleThreshold, ThrottleCooldownSecs: p.ThrottleCooldownSecs,
@@ -364,7 +366,8 @@ func analysisConfigView(cfg model.AnalysisConfig) map[string]any {
 		"sls_access_key_id": secret(cfg.SLSAccessKeyID), "sls_access_key_secret": secret(cfg.SLSAccessKeySecret),
 		"feishu_mode": cfg.FeishuMode, "feishu_webhook": secret(cfg.FeishuWebhook),
 		"feishu_app_id": cfg.FeishuAppID, "feishu_app_secret": secret(cfg.FeishuAppSecret), "feishu_chat_id": cfg.FeishuChatID,
-		"model": cfg.Model, "reasoning_effort": cfg.ReasoningEffort, "concurrency": cfg.Concurrency,
+		"feishu_mention_mapping": cfg.FeishuMentionMapping,
+		"model":                  cfg.Model, "reasoning_effort": cfg.ReasoningEffort, "concurrency": cfg.Concurrency,
 		"timeout_seconds": cfg.TimeoutSeconds, "log_window_seconds": cfg.LogWindowSeconds, "prompt": cfg.Prompt,
 		"throttle_enabled": cfg.ThrottleEnabled, "throttle_threshold": cfg.ThrottleThreshold,
 		"throttle_cooldown_seconds": cfg.ThrottleCooldownSecs, "throttle_fields": cfg.ThrottleFields,

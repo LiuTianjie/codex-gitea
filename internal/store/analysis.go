@@ -29,6 +29,7 @@ func normalizeAnalysisConfig(c *model.AnalysisConfig) {
 	c.FeishuWebhook = strings.TrimSpace(c.FeishuWebhook)
 	c.FeishuAppID = strings.TrimSpace(c.FeishuAppID)
 	c.FeishuChatID = strings.TrimSpace(c.FeishuChatID)
+	c.FeishuMentionMapping = strings.TrimSpace(c.FeishuMentionMapping)
 	c.Model = strings.TrimSpace(c.Model)
 	c.ReasoningEffort = strings.TrimSpace(c.ReasoningEffort)
 	if c.FeishuMode == "" {
@@ -141,13 +142,13 @@ func (s *Store) CreateAnalysisConfig(ctx context.Context, c *model.AnalysisConfi
 	now := nowRFC3339()
 	res, err := s.db.ExecContext(ctx, `INSERT INTO alert_analysis_configs(
 		name,enabled,version,repository_url,repository_ref,sls_endpoint,sls_project,sls_logstore,
-		sls_access_key_id,sls_access_key_secret,feishu_mode,feishu_webhook,feishu_app_id,feishu_app_secret,feishu_chat_id,
+		sls_access_key_id,sls_access_key_secret,feishu_mode,feishu_webhook,feishu_app_id,feishu_app_secret,feishu_chat_id,feishu_mention_mapping,
 		model,reasoning_effort,concurrency,timeout_seconds,
 		log_window_seconds,prompt,throttle_enabled,throttle_threshold,throttle_cooldown_seconds,
 		throttle_fields,ingest_token_hash,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		c.Name, boolInt(c.Enabled), 1, c.RepositoryURL, c.RepositoryRef, c.SLSEndpoint,
-		c.SLSProject, c.SLSLogstore, akID, akSecret, c.FeishuMode, feishu, c.FeishuAppID, feishuAppSecret, c.FeishuChatID,
+		c.SLSProject, c.SLSLogstore, akID, akSecret, c.FeishuMode, feishu, c.FeishuAppID, feishuAppSecret, c.FeishuChatID, c.FeishuMentionMapping,
 		c.Model, c.ReasoningEffort, c.Concurrency,
 		c.TimeoutSeconds, c.LogWindowSeconds, c.Prompt, boolInt(c.ThrottleEnabled),
 		c.ThrottleThreshold, c.ThrottleCooldownSecs, c.ThrottleFields, c.IngestTokenHash, now, now)
@@ -188,11 +189,11 @@ func (s *Store) UpdateAnalysisConfig(ctx context.Context, c *model.AnalysisConfi
 	res, err := s.db.ExecContext(ctx, `UPDATE alert_analysis_configs SET
 		name=?,enabled=?,version=version+1,repository_url=?,repository_ref=?,sls_endpoint=?,
 		sls_project=?,sls_logstore=?,sls_access_key_id=?,sls_access_key_secret=?,feishu_mode=?,feishu_webhook=?,
-		feishu_app_id=?,feishu_app_secret=?,feishu_chat_id=?,
+		feishu_app_id=?,feishu_app_secret=?,feishu_chat_id=?,feishu_mention_mapping=?,
 		model=?,reasoning_effort=?,concurrency=?,timeout_seconds=?,log_window_seconds=?,prompt=?,throttle_enabled=?,
 		throttle_threshold=?,throttle_cooldown_seconds=?,throttle_fields=?,updated_at=? WHERE id=?`,
 		c.Name, boolInt(c.Enabled), c.RepositoryURL, c.RepositoryRef, c.SLSEndpoint, c.SLSProject,
-		c.SLSLogstore, akID, akSecret, c.FeishuMode, feishu, c.FeishuAppID, feishuAppSecret, c.FeishuChatID,
+		c.SLSLogstore, akID, akSecret, c.FeishuMode, feishu, c.FeishuAppID, feishuAppSecret, c.FeishuChatID, c.FeishuMentionMapping,
 		c.Model, c.ReasoningEffort, c.Concurrency, c.TimeoutSeconds,
 		c.LogWindowSeconds, c.Prompt, boolInt(c.ThrottleEnabled), c.ThrottleThreshold,
 		c.ThrottleCooldownSecs, c.ThrottleFields, nowRFC3339(), c.ID)
@@ -233,7 +234,7 @@ func (s *Store) GetAnalysisConfig(ctx context.Context, id int64) (*model.Analysi
 
 const analysisConfigSelect = `SELECT id,name,enabled,version,repository_url,repository_ref,
 	sls_endpoint,sls_project,sls_logstore,sls_access_key_id,sls_access_key_secret,feishu_mode,feishu_webhook,
-	feishu_app_id,feishu_app_secret,feishu_chat_id,
+	feishu_app_id,feishu_app_secret,feishu_chat_id,feishu_mention_mapping,
 	model,reasoning_effort,concurrency,timeout_seconds,log_window_seconds,prompt,throttle_enabled,
 	throttle_threshold,throttle_cooldown_seconds,throttle_fields,ingest_token_hash,created_at,updated_at
 	FROM alert_analysis_configs`
@@ -246,7 +247,7 @@ func (s *Store) scanAnalysisConfig(row rowScanner) (*model.AnalysisConfig, error
 	var akID, akSecret, feishu, feishuAppSecret, created, updated string
 	if err := row.Scan(&c.ID, &c.Name, &enabled, &c.Version, &c.RepositoryURL, &c.RepositoryRef,
 		&c.SLSEndpoint, &c.SLSProject, &c.SLSLogstore, &akID, &akSecret, &c.FeishuMode, &feishu,
-		&c.FeishuAppID, &feishuAppSecret, &c.FeishuChatID,
+		&c.FeishuAppID, &feishuAppSecret, &c.FeishuChatID, &c.FeishuMentionMapping,
 		&c.Model, &c.ReasoningEffort, &c.Concurrency, &c.TimeoutSeconds, &c.LogWindowSeconds, &c.Prompt,
 		&throttle, &c.ThrottleThreshold, &c.ThrottleCooldownSecs, &c.ThrottleFields,
 		&c.IngestTokenHash, &created, &updated); err != nil {
