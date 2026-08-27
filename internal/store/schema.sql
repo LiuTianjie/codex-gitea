@@ -58,3 +58,81 @@ CREATE TABLE IF NOT EXISTS project_skills(
   created_at TEXT,
   updated_at TEXT,
   UNIQUE(owner,repo));
+
+CREATE TABLE IF NOT EXISTS alert_analysis_configs(
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  version INTEGER NOT NULL DEFAULT 1,
+  repository_url TEXT NOT NULL,
+  repository_ref TEXT NOT NULL,
+  sls_endpoint TEXT NOT NULL,
+  sls_project TEXT NOT NULL,
+  sls_logstore TEXT NOT NULL,
+  sls_access_key_id TEXT NOT NULL,
+  sls_access_key_secret TEXT NOT NULL,
+  feishu_webhook TEXT NOT NULL,
+  model TEXT NOT NULL DEFAULT '',
+  reasoning_effort TEXT NOT NULL DEFAULT '',
+  timeout_seconds INTEGER NOT NULL DEFAULT 1800,
+  log_window_seconds INTEGER NOT NULL DEFAULT 180,
+  prompt TEXT NOT NULL DEFAULT '',
+  throttle_enabled INTEGER NOT NULL DEFAULT 1,
+  throttle_threshold INTEGER NOT NULL DEFAULT 1,
+  throttle_cooldown_seconds INTEGER NOT NULL DEFAULT 0,
+  throttle_fields TEXT NOT NULL DEFAULT 'method,endpoint,error_code,error_message',
+  ingest_token_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS alert_analysis_configs_enabled ON alert_analysis_configs(enabled,id);
+
+CREATE TABLE IF NOT EXISTS analysis_tasks(
+  id INTEGER PRIMARY KEY,
+  config_id INTEGER REFERENCES alert_analysis_configs(id) ON DELETE SET NULL,
+  config_version INTEGER NOT NULL,
+  config_name TEXT NOT NULL,
+  delivery_id TEXT NOT NULL,
+  retry_of_task_id INTEGER REFERENCES analysis_tasks(id) ON DELETE SET NULL,
+  duplicate_of_task_id INTEGER REFERENCES analysis_tasks(id) ON DELETE SET NULL,
+  fingerprint TEXT NOT NULL,
+  alert_payload TEXT NOT NULL,
+  config_snapshot TEXT NOT NULL,
+  status TEXT NOT NULL,
+  phase TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  cancel_requested INTEGER NOT NULL DEFAULT 0,
+  error_type TEXT NOT NULL DEFAULT '',
+  error TEXT NOT NULL DEFAULT '',
+  result_json TEXT NOT NULL DEFAULT '',
+  notification_status TEXT NOT NULL DEFAULT '',
+  notification_error TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  UNIQUE(config_id,delivery_id)
+);
+CREATE INDEX IF NOT EXISTS analysis_tasks_claim ON analysis_tasks(status,id);
+CREATE INDEX IF NOT EXISTS analysis_tasks_created ON analysis_tasks(created_at DESC,id DESC);
+CREATE INDEX IF NOT EXISTS analysis_tasks_config_created ON analysis_tasks(config_id,created_at DESC,id DESC);
+
+CREATE TABLE IF NOT EXISTS analysis_task_events(
+  id INTEGER PRIMARY KEY,
+  task_id INTEGER NOT NULL REFERENCES analysis_tasks(id) ON DELETE CASCADE,
+  sequence INTEGER NOT NULL,
+  phase TEXT NOT NULL,
+  level TEXT NOT NULL,
+  message TEXT NOT NULL,
+  data_json TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  UNIQUE(task_id,sequence)
+);
+CREATE INDEX IF NOT EXISTS analysis_task_events_task ON analysis_task_events(task_id,id);
+
+CREATE TABLE IF NOT EXISTS analysis_throttle_states(
+  config_id INTEGER PRIMARY KEY REFERENCES alert_analysis_configs(id) ON DELETE CASCADE,
+  last_fingerprint TEXT NOT NULL DEFAULT '',
+  consecutive_count INTEGER NOT NULL DEFAULT 0,
+  suppressed_until TEXT,
+  updated_at TEXT NOT NULL
+);

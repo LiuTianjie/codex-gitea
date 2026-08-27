@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/turning4th/codex-gitea/internal/secretbox"
 	_ "modernc.org/sqlite"
 
 	"github.com/turning4th/codex-gitea/internal/model"
@@ -22,14 +23,33 @@ var schemaSQL string
 
 // Store is the SQLite-backed implementation of model.Store.
 type Store struct {
-	db *sql.DB
+	db        *sql.DB
+	secretBox *secretbox.Box
 }
 
 var _ model.Store = (*Store)(nil)
 
 // Open opens (creating if needed) the SQLite database at dbPath, enables WAL,
 // and applies the embedded schema.
-func Open(dbPath string) (*Store, error) {
+type Option func(*Store) error
+
+// WithSecretKey enables AES-GCM encryption for console-managed integration
+// credentials. Existing callers may omit it when they do not use that feature.
+func WithSecretKey(key string) Option {
+	return func(s *Store) error {
+		if strings.TrimSpace(key) == "" {
+			return nil
+		}
+		box, err := secretbox.New(key)
+		if err != nil {
+			return err
+		}
+		s.secretBox = box
+		return nil
+	}
+}
+
+func Open(dbPath string, opts ...Option) (*Store, error) {
 	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
@@ -60,7 +80,14 @@ func Open(dbPath string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db}, nil
+	s := &Store{db: db}
+	for _, opt := range opts {
+		if err := opt(s); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("configure store: %w", err)
+		}
+	}
+	return s, nil
 }
 
 func sqliteDSN(dbPath string) string {
@@ -108,6 +135,10 @@ func nullableTime(ns sql.NullString) *time.Time {
 }
 
 func migrateSchema(db *sql.DB) error {
+	hadDuplicateTaskColumn, err := columnExists(db, "analysis_tasks", "duplicate_of_task_id")
+	if err != nil {
+		return err
+	}
 	for _, col := range []struct {
 		table string
 		name  string
@@ -125,9 +156,22 @@ func migrateSchema(db *sql.DB) error {
 		{table: "jobs", name: "retryable", def: "INTEGER DEFAULT 0"},
 		{table: "jobs", name: "next_attempt_at", def: "TEXT"},
 		{table: "review_runs", name: "error_type", def: "TEXT"},
+		{table: "analysis_tasks", name: "duplicate_of_task_id", def: "INTEGER REFERENCES analysis_tasks(id) ON DELETE SET NULL"},
 	} {
 		if err := ensureColumn(db, col.table, col.name, col.def); err != nil {
 			return err
+		}
+	}
+	if !hadDuplicateTaskColumn {
+		// One-time upgrade from the original five-run throttle. Existing custom
+		// fingerprints are preserved; only the shipped defaults are narrowed.
+		if _, err := db.Exec(`UPDATE alert_analysis_configs
+			SET throttle_threshold=1,
+				throttle_cooldown_seconds=CASE WHEN throttle_cooldown_seconds=600 THEN 0 ELSE throttle_cooldown_seconds END,
+				throttle_fields=CASE WHEN throttle_fields='environment,service,method,endpoint,error_code,error_message'
+					THEN 'method,endpoint,error_code,error_message' ELSE throttle_fields END
+			WHERE throttle_threshold=5`); err != nil {
+			return fmt.Errorf("migrate alert analysis duplicate throttle: %w", err)
 		}
 	}
 	if _, err := db.Exec(`UPDATE findings SET agent='codex' WHERE agent IS NULL OR agent=''`); err != nil {
@@ -162,6 +206,31 @@ func migrateSchema(db *sql.DB) error {
 		return fmt.Errorf("migrate project skills: %w", err)
 	}
 	return nil
+}
+
+func columnExists(db *sql.DB, table, name string) (bool, error) {
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false, fmt.Errorf("inspect %s schema: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid       int
+			colName   string
+			colType   string
+			notNull   int
+			defaultV  sql.NullString
+			primaryKy int
+		)
+		if err := rows.Scan(&cid, &colName, &colType, &notNull, &defaultV, &primaryKy); err != nil {
+			return false, fmt.Errorf("scan %s schema: %w", table, err)
+		}
+		if colName == name {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func ensureColumn(db *sql.DB, table, name, def string) error {

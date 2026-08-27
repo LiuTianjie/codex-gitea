@@ -8,6 +8,11 @@ services:
     environment:
       # Required: protects the /admin console. No password => console returns 503.
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in your environment or .env}
+      # Required before creating alert-analysis configs. Keep this stable or
+      # existing SLS/Feishu credentials cannot be decrypted after restart.
+      SECRET_KEY: ${SECRET_KEY:-}
+      # Optional absolute service URL used by Feishu cards for console links.
+      PUBLIC_URL: ${PUBLIC_URL:-}
       # Everything below is optional here — the /admin console writes these into
       # the DB, and DB settings override env. Set them here only to bootstrap.
       GITEA_URL: ${GITEA_URL:-}
@@ -30,6 +35,14 @@ services:
       MINIMAX_BASE_URL: ${MINIMAX_BASE_URL:-}
       MINIMAX_MODEL: ${MINIMAX_MODEL:-}
       MINIMAX_MAX_BUDGET_USD: ${MINIMAX_MAX_BUDGET_USD:-0.3}
+      # Alert-analysis Git cache (also hot-configurable in /admin).
+      ANALYSIS_GIT_FETCH_DEPTH: ${ANALYSIS_GIT_FETCH_DEPTH:-200}
+      ANALYSIS_CACHE_MAX_REPOSITORIES: ${ANALYSIS_CACHE_MAX_REPOSITORIES:-3}
+      ANALYSIS_CACHE_MAX_MB: ${ANALYSIS_CACHE_MAX_MB:-5120}
+      ANALYSIS_CACHE_MAX_IDLE: ${ANALYSIS_CACHE_MAX_IDLE:-168h}
+      ANALYSIS_WORKTREE_TTL: ${ANALYSIS_WORKTREE_TTL:-1h}
+      ANALYSIS_CACHE_CLEANUP_INTERVAL: ${ANALYSIS_CACHE_CLEANUP_INTERVAL:-10m}
+      ANALYSIS_MIN_FREE_MB: ${ANALYSIS_MIN_FREE_MB:-1024}
       # apikey mode only (separately billed OpenAI Platform key):
       # CODEX_API_KEY: ${CODEX_API_KEY:-}
     volumes:

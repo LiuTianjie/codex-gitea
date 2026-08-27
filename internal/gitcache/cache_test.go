@@ -141,6 +141,45 @@ func TestPrepareCleanupRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPrepareRevisionChecksOutConfiguredBranch(t *testing.T) {
+	cloneURL, _, headSHA := setupRemote(t)
+	cacheDir := t.TempDir()
+	workDir := t.TempDir()
+	c := New(cacheDir, workDir, WithToken("reused-gitea-token"))
+
+	wt, resolvedSHA, err := c.PrepareRevision(context.Background(), cloneURL, "main", 42)
+	if err != nil {
+		t.Fatalf("PrepareRevision: %v", err)
+	}
+	if resolvedSHA == "" || resolvedSHA == headSHA {
+		t.Fatalf("resolved SHA = %q, expected main before PR head %q", resolvedSHA, headSHA)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "base.txt")); err != nil {
+		t.Fatalf("configured revision is missing base.txt: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "pr.txt")); !os.IsNotExist(err) {
+		t.Fatalf("configured main unexpectedly includes PR-only file: %v", err)
+	}
+
+	if err := c.CleanupRevision(cloneURL, 42); err != nil {
+		t.Fatalf("CleanupRevision: %v", err)
+	}
+	if dirExists(wt) {
+		t.Fatalf("incident worktree %q still present after cleanup", wt)
+	}
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("incident mirror should be retained: entries=%d err=%v", len(entries), err)
+	}
+	cfg, err := os.ReadFile(filepath.Join(cacheDir, entries[0].Name(), "config"))
+	if err != nil {
+		t.Fatalf("read incident mirror config: %v", err)
+	}
+	if strings.Contains(string(cfg), "reused-gitea-token") {
+		t.Fatal("reused Gitea token leaked into incident mirror config")
+	}
+}
+
 // TestPrepareEmptyHeadSHA guards the early validation.
 func TestPrepareEmptyHeadSHA(t *testing.T) {
 	c := New(t.TempDir(), t.TempDir())

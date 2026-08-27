@@ -6,6 +6,7 @@ import * as echarts from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import {
   Activity,
+  BellRing,
   BarChart3,
   BookOpen,
   ChevronLeft,
@@ -20,7 +21,9 @@ import {
   Save,
   Send,
   Settings,
+  ShieldAlert,
   Sparkles,
+  Trash2,
   Users,
   XCircle
 } from 'lucide-react'
@@ -58,14 +61,22 @@ const FIELDS = [
   'minimax_base_url',
   'minimax_max_budget_usd',
   'repo_allowlist',
-  'timeout'
+  'timeout',
+  'analysis_git_fetch_depth',
+  'analysis_cache_max_repositories',
+  'analysis_cache_max_mb',
+  'analysis_cache_max_idle',
+  'analysis_worktree_ttl',
+  'analysis_cache_cleanup_interval',
+  'analysis_min_free_mb'
 ]
 
 const FIELD_GROUPS = {
   common: ['gitea_url', 'gitea_token', 'gitea_timeout', 'webhook_secret', 'trigger_keywords', 'repo_allowlist', 'concurrency', 'timeout'],
   codex: ['model', 'codex_reasoning_effort', 'codex_base_url', 'codex_auth_mode', 'codex_cc_switch_provider_id', 'codex_sandbox_mode', 'codex_api_key'],
   claude: ['claude_enabled', 'claude_model', 'claude_api_key', 'claude_base_url', 'claude_home', 'cc_switch_config_dir', 'cc_switch_provider_id', 'claude_max_budget_usd'],
-  minimax: ['minimax_enabled', 'minimax_model', 'minimax_provider_id', 'minimax_api_key', 'minimax_base_url', 'minimax_max_budget_usd']
+  minimax: ['minimax_enabled', 'minimax_model', 'minimax_provider_id', 'minimax_api_key', 'minimax_base_url', 'minimax_max_budget_usd'],
+  analysisCache: ['analysis_git_fetch_depth', 'analysis_cache_max_repositories', 'analysis_cache_max_mb', 'analysis_cache_max_idle', 'analysis_worktree_ttl', 'analysis_cache_cleanup_interval', 'analysis_min_free_mb']
 }
 
 const DEFAULT_SETTINGS = {
@@ -75,7 +86,14 @@ const DEFAULT_SETTINGS = {
   claude_home: '/claude-home',
   cc_switch_config_dir: '/cc-switch',
   claude_max_budget_usd: '0.3',
-  minimax_max_budget_usd: '0.3'
+  minimax_max_budget_usd: '0.3',
+  analysis_git_fetch_depth: '200',
+  analysis_cache_max_repositories: '3',
+  analysis_cache_max_mb: '5120',
+  analysis_cache_max_idle: '168h',
+  analysis_worktree_ttl: '1h',
+  analysis_cache_cleanup_interval: '10m',
+  analysis_min_free_mb: '1024'
 }
 
 const DEFAULT_REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh']
@@ -111,11 +129,20 @@ const SETTING_META = {
   minimax_provider_id: { label: 'MiniMax Provider' },
   minimax_api_key: { label: 'MiniMax API Key', secret: true },
   minimax_base_url: { label: 'MiniMax Base URL' },
-  minimax_max_budget_usd: { label: 'MiniMax 预算 USD' }
+  minimax_max_budget_usd: { label: 'MiniMax 预算 USD' },
+  analysis_git_fetch_depth: { label: '浅拉提交深度', placeholder: '200' },
+  analysis_cache_max_repositories: { label: '最多缓存仓库数', placeholder: '3' },
+  analysis_cache_max_mb: { label: '缓存容量上限（MB）', placeholder: '5120' },
+  analysis_cache_max_idle: { label: '仓库最大闲置时间', placeholder: '168h' },
+  analysis_worktree_ttl: { label: '残留 Worktree TTL', placeholder: '1h' },
+  analysis_cache_cleanup_interval: { label: '自动清理周期', placeholder: '10m' },
+  analysis_min_free_mb: { label: '最低磁盘余量（MB）', placeholder: '1024；0 表示关闭水位保护' }
 }
 
 const TABS = [
   { id: 'jobs', label: '任务', icon: Activity },
+  { id: 'alert_tasks', label: '告警分析', icon: ShieldAlert },
+  { id: 'alert_configs', label: '告警配置', icon: BellRing },
   { id: 'chat', label: '对话', icon: MessageSquare },
   { id: 'analytics', label: '分析', icon: BarChart3 },
   { id: 'skills', label: 'Skill', icon: BookOpen },
@@ -195,8 +222,23 @@ function sourceURL(baseURL, finding) {
   return url
 }
 
+const STATUS_LABELS = {
+  queued: '排队中', pending: '等待中', running: '运行中', cancel_requested: '取消中',
+  succeeded: '成功', failed: '失败', canceled: '已取消', suppressed: '重复告警', superseded: '已替代',
+  critical: '严重', high: '高', medium: '中', low: '低', info: '提示',
+  open: '待处理', fixed: '已修复', dismissed: '已忽略', completed: '已完成', unknown: '未知',
+  enabled: '已启用', disabled: '已停用'
+}
+
+const PHASE_LABELS = {
+  queued: '等待执行', fetching_logs: '获取原始日志', logs_ready: '原始日志已获取',
+  preparing_repository: '准备代码仓库', repository_ready: '代码版本已准备',
+  analyzing: '分析代码与提交', succeeded: '分析完成', failed: '分析失败',
+  cancel_requested: '正在取消', canceled: '已取消', suppressed: '重复告警，已分析'
+}
+
 function StatusBadge({ status }) {
-  return <span className={`badge status-${status || 'unknown'}`}>{status || '-'}</span>
+  return <span className={`badge status-${status || 'unknown'}`}>{STATUS_LABELS[status] || status || '-'}</span>
 }
 
 function Message({ message }) {
@@ -224,7 +266,8 @@ function StatCard({ label, value, hint }) {
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState('jobs')
+  const initialAnalysisTask = new URLSearchParams(window.location.search).get('analysis_task')
+  const [activeTab, setActiveTab] = useState(initialAnalysisTask ? 'alert_tasks' : 'jobs')
 
   return (
     <div className="app-shell">
@@ -249,6 +292,8 @@ function App() {
 
       <main>
         {activeTab === 'jobs' ? <JobsPanel /> : null}
+        {activeTab === 'alert_tasks' ? <AnalysisTasksPanel initialTaskId={initialAnalysisTask} /> : null}
+        {activeTab === 'alert_configs' ? <AnalysisConfigsPanel /> : null}
         {activeTab === 'chat' ? <ChatProbePanel /> : null}
         {activeTab === 'analytics' ? <AnalyticsPanel /> : null}
         {activeTab === 'skills' ? <SkillsPanel /> : null}
@@ -495,7 +540,6 @@ function JobLogsDrawer({ open, job, loading, onClose, onRerun, onCancel }) {
               {job.status === 'pending' ? <IconButton icon={XCircle} className="danger" onClick={() => onCancel(job.id)}>取消</IconButton> : null}
               <IconButton icon={RotateCcw} onClick={() => onRerun(job.id)}>重新运行</IconButton>
             </div>
-
             <dl className="log-meta">
               <div><dt>创建</dt><dd>{prettyTime(job.created_at)}</dd></div>
               <div><dt>开始</dt><dd>{prettyTime(job.started_at)}</dd></div>
@@ -520,6 +564,331 @@ function JobLogsDrawer({ open, job, loading, onClose, onRerun, onCancel }) {
       </aside>
     </div>
   )
+}
+
+const EMPTY_ANALYSIS_CONFIG = {
+  name: '', enabled: true, repository_url: '', repository_ref: 'main',
+  sls_endpoint: '', sls_project: '', sls_logstore: '',
+  sls_access_key_id: '', sls_access_key_secret: '', feishu_webhook: '',
+  model: '', reasoning_effort: 'high', timeout_seconds: 1800,
+  log_window_seconds: 180, prompt: '', throttle_enabled: true,
+  throttle_threshold: 1, throttle_cooldown_seconds: 0,
+  throttle_fields: 'method,endpoint,error_code,error_message'
+}
+
+function AnalysisTasksPanel({ initialTaskId }) {
+  const [tasks, setTasks] = useState([])
+  const [configs, setConfigs] = useState([])
+  const [status, setStatus] = useState('')
+  const [configId, setConfigId] = useState('')
+  const [page, setPage] = useState(1)
+  const [hasMore, setHasMore] = useState(false)
+  const [selectedId, setSelectedId] = useState(initialTaskId || null)
+  const [detail, setDetail] = useState(null)
+  const [message, setMessage] = useState(null)
+
+  const load = useCallback(async () => {
+    const params = new URLSearchParams({ page: String(page), page_size: '30' })
+    if (status) params.set('status', status)
+    if (configId) params.set('config_id', configId)
+    const [taskPayload, configPayload] = await Promise.all([
+      fetchJSON(`/admin/api/alert-analysis/tasks?${params.toString()}`, {}, 8000),
+      fetchJSON('/admin/api/alert-analysis/configs', {}, 8000)
+    ])
+    setTasks(taskPayload.tasks || [])
+    setHasMore(Boolean(taskPayload.has_more))
+    setConfigs(configPayload.configs || [])
+  }, [page, status, configId])
+
+  const loadDetail = useCallback(async () => {
+    if (!selectedId) {
+      setDetail(null)
+      return
+    }
+    const payload = await fetchJSON(`/admin/api/alert-analysis/tasks/${encodeURIComponent(selectedId)}`, {}, 8000)
+    setDetail(payload)
+  }, [selectedId])
+
+  useEffect(() => {
+    load().catch((error) => setMessage({ ok: false, text: `加载告警任务失败：${error.message}` }))
+  }, [load])
+
+  useEffect(() => {
+    loadDetail().catch((error) => setMessage({ ok: false, text: `加载任务详情失败：${error.message}` }))
+    const timer = setInterval(() => {
+      load().catch(() => {})
+      loadDetail().catch(() => {})
+    }, 2000)
+    return () => clearInterval(timer)
+  }, [load, loadDetail])
+
+  const cancelTask = async (id) => {
+    try {
+      await fetchJSON(`/admin/api/alert-analysis/tasks/${encodeURIComponent(id)}/cancel`, { method: 'POST' }, 8000)
+      setMessage({ ok: true, text: `已请求取消告警分析 #${id}` })
+      await Promise.all([load(), loadDetail()])
+    } catch (error) {
+      setMessage({ ok: false, text: `取消失败：${error.message}` })
+    }
+  }
+
+  const retryTask = async (id) => {
+    try {
+      const payload = await fetchJSON(`/admin/api/alert-analysis/tasks/${encodeURIComponent(id)}/retry`, { method: 'POST' }, 8000)
+      const nextId = payload.task?.id
+      setMessage({ ok: true, text: `已创建重试任务 #${nextId}` })
+      setSelectedId(nextId)
+      await load()
+    } catch (error) {
+      setMessage({ ok: false, text: `重试失败：${error.message}` })
+    }
+  }
+
+  return (
+    <section className="panel">
+      <div className="section-head">
+        <div><h2>告警分析</h2><p>阶段进度每 2 秒刷新；被节流的告警也会保留记录</p></div>
+        <div className="toolbar">
+          <select value={configId} onChange={(event) => { setPage(1); setConfigId(event.target.value) }}>
+            <option value="">全部配置</option>
+            {configs.map((cfg) => <option key={cfg.id} value={cfg.id}>{cfg.name}</option>)}
+          </select>
+          <select value={status} onChange={(event) => { setPage(1); setStatus(event.target.value) }}>
+            <option value="">全部状态</option>
+            {['queued', 'running', 'cancel_requested', 'succeeded', 'failed', 'canceled', 'suppressed'].map((item) => <option key={item} value={item}>{STATUS_LABELS[item]}</option>)}
+          </select>
+          <IconButton icon={RefreshCw} onClick={load}>刷新</IconButton>
+          <IconButton icon={ChevronLeft} onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page <= 1}>上一页</IconButton>
+          <span className="pager">{page}</span>
+          <IconButton icon={ChevronRight} onClick={() => setPage((value) => value + 1)} disabled={!hasMore}>下一页</IconButton>
+        </div>
+      </div>
+      <Message message={message} />
+      <div className="table-shell">
+        <table className="data-table job-table analysis-task-table">
+          <thead><tr><th>ID</th><th>配置</th><th>环境</th><th>告警</th><th>接口/服务</th><th>状态</th><th>阶段</th><th>时间</th></tr></thead>
+          <tbody>
+            {tasks.length ? tasks.map((task) => (
+              <tr key={task.id} onClick={() => setSelectedId(task.id)}>
+                <td>#{task.id}</td><td>{task.config_name}</td><td>{task.alert?.environment || '-'}</td>
+                <td>{task.alert?.title || task.alert?.error_code || '-'}</td>
+                <td><code>{[task.alert?.method, task.alert?.endpoint || task.alert?.service].filter(Boolean).join(' ') || '-'}</code></td>
+                <td><StatusBadge status={task.status} /></td><td>{PHASE_LABELS[task.phase] || task.phase}</td><td>{prettyTime(task.created_at)}</td>
+              </tr>
+            )) : <tr><td colSpan="8" className="empty-cell">暂无告警分析任务</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      <AnalysisTaskDrawer task={detail} open={Boolean(selectedId)} onClose={() => setSelectedId(null)} onCancel={cancelTask} onRetry={retryTask} />
+    </section>
+  )
+}
+
+function AnalysisTaskDrawer({ task, open, onClose, onCancel, onRetry }) {
+  if (!open) return null
+  const running = task && ['queued', 'running', 'cancel_requested'].includes(task.status)
+  const result = task?.result || null
+  return (
+    <div className="drawer-layer" role="dialog" aria-modal="true" aria-label="告警分析详情">
+      <button className="drawer-backdrop" type="button" aria-label="关闭" onClick={onClose} />
+      <aside className="log-drawer analysis-drawer">
+        <div className="log-drawer-head">
+          <div><span className="drawer-eyebrow">告警分析</span><h2>{task ? `告警分析 #${task.id}` : '加载中...'}</h2><p>{task?.config_name || ''}</p></div>
+          <button className="drawer-close" type="button" onClick={onClose}><XCircle size={20} /></button>
+        </div>
+        {!task ? <div className="drawer-loading">正在读取任务...</div> : (
+          <div className="analysis-detail-scroll">
+            <div className="log-drawer-summary"><StatusBadge status={task.status} /><span>{PHASE_LABELS[task.phase] || task.phase}</span><span>已尝试 {task.attempts} 次</span></div>
+            <div className="log-drawer-actions">
+              {running && task.status !== 'cancel_requested' ? <IconButton icon={XCircle} className="danger" onClick={() => onCancel(task.id)}>取消分析</IconButton> : null}
+              {!running ? <IconButton icon={RotateCcw} onClick={() => onRetry(task.id)}>重新分析</IconButton> : null}
+            </div>
+            {task.duplicate_of_task_id ? (
+              <section className="analysis-card-block">
+                <h3>重复报错，已分析</h3>
+                <p>相同接口与错误信息已由任务 <a href={`/admin/?analysis_task=${task.duplicate_of_task_id}`}>#{task.duplicate_of_task_id}</a> 分析，本次未重复运行模型。</p>
+              </section>
+            ) : null}
+            <section className="analysis-card-block">
+              <h3>告警信息</h3>
+              <dl className="log-meta analysis-meta">
+                <div><dt>环境</dt><dd>{task.alert?.environment || '-'}</dd></div>
+                <div><dt>服务</dt><dd>{task.alert?.service || '-'}</dd></div>
+                <div className="wide"><dt>接口</dt><dd><code>{[task.alert?.method, task.alert?.endpoint].filter(Boolean).join(' ') || '-'}</code></dd></div>
+                <div className="wide"><dt>Trace ID</dt><dd><code>{task.alert?.trace_id || '-'}</code></dd></div>
+              </dl>
+            </section>
+            {result ? <AnalysisResultView result={result} /> : null}
+            {task.error ? <section className="analysis-card-block error-block"><h3>失败信息</h3><pre>{task.error}</pre></section> : null}
+            <section className="analysis-card-block">
+              <h3>进度事件</h3>
+              <div className="analysis-timeline">
+                {(task.events || []).map((event) => <div key={event.id} className={`timeline-item ${event.level}`}><time>{prettyTime(event.created_at)}</time><strong>{event.phase}</strong><p>{event.message}</p></div>)}
+              </div>
+            </section>
+          </div>
+        )}
+      </aside>
+    </div>
+  )
+}
+
+function AnalysisResultView({ result }) {
+  return (
+    <section className="analysis-card-block result-block">
+      <div className="subsection-title"><h3>分析结论</h3><StatusBadge status={result.confidence} /></div>
+      <p className="analysis-summary">{result.summary}</p>
+      <div className="analysis-assessment">
+        <div><span>AI 评估严重程度</span><StatusBadge status={result.assessed_severity || 'low'} /></div>
+        <p>{result.severity_reason || '暂无评估依据'}</p>
+      </div>
+      <AnalysisStringList title="影响面" items={result.impact_scope} />
+      <AnalysisStringList title="事实" items={result.facts} />
+      <AnalysisStringList title="假设" items={result.hypotheses} />
+      {(result.code_evidence || []).length ? <div className="analysis-evidence"><h4>代码证据</h4>{result.code_evidence.map((item, index) => <p key={`${item.path}-${index}`}><code>{item.path}{item.line ? `:${item.line}` : ''}</code> — {item.reason}</p>)}</div> : null}
+      {(result.suspect_commits || []).length ? <div className="analysis-evidence"><h4>相关提交</h4>{result.suspect_commits.map((item, index) => <p key={`${item.sha}-${index}`}><code>{item.sha?.slice(0, 10)}</code> {item.title} · {item.author} · <StatusBadge status={item.confidence} /><br /><span>{item.reason}</span></p>)}</div> : null}
+      <AnalysisStringList title="建议联系" items={result.suggested_contacts} />
+      <AnalysisStringList title="证据缺口" items={result.evidence_gaps} />
+      <AnalysisStringList title="建议操作" items={result.recommended_actions} />
+    </section>
+  )
+}
+
+function AnalysisStringList({ title, items }) {
+  if (!items?.length) return null
+  return <div className="analysis-evidence"><h4>{title}</h4><ul>{items.map((item, index) => <li key={`${title}-${index}`}>{item}</li>)}</ul></div>
+}
+
+function AnalysisConfigsPanel() {
+  const [configs, setConfigs] = useState([])
+  const [selectedId, setSelectedId] = useState(null)
+  const [form, setForm] = useState(EMPTY_ANALYSIS_CONFIG)
+  const [message, setMessage] = useState(null)
+  const [ingestURL, setIngestURL] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    const payload = await fetchJSON('/admin/api/alert-analysis/configs', {}, 8000)
+    setConfigs(payload.configs || [])
+    return payload.configs || []
+  }, [])
+
+  useEffect(() => { load().catch((error) => setMessage({ ok: false, text: `加载配置失败：${error.message}` })) }, [load])
+
+  const selectConfig = (config) => {
+    setSelectedId(config.id)
+    setForm({ ...EMPTY_ANALYSIS_CONFIG, ...config })
+    setIngestURL('')
+    setMessage(null)
+  }
+  const newConfig = () => { setSelectedId(null); setForm({ ...EMPTY_ANALYSIS_CONFIG }); setIngestURL(''); setMessage(null) }
+  const setField = (key, value) => setForm((current) => ({ ...current, [key]: value }))
+
+  const save = async () => {
+    setBusy(true)
+    try {
+      const url = selectedId ? `/admin/api/alert-analysis/configs/${selectedId}` : '/admin/api/alert-analysis/configs'
+      const payload = await fetchJSON(url, { method: selectedId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) }, 12000)
+      setMessage({ ok: true, text: selectedId ? '告警配置已更新' : '告警配置已创建，请立即复制专属接收地址' })
+      if (payload.config?.ingest_url) setIngestURL(payload.config.ingest_url)
+      const next = await load()
+      const id = payload.config?.id || selectedId
+      const config = next.find((item) => item.id === id)
+      if (config) { setSelectedId(id); setForm({ ...EMPTY_ANALYSIS_CONFIG, ...config }) }
+    } catch (error) {
+      setMessage({ ok: false, text: `保存失败：${error.message}` })
+    } finally { setBusy(false) }
+  }
+
+  const toggle = async () => {
+    if (!selectedId) return
+    try {
+      const payload = await fetchJSON(`/admin/api/alert-analysis/configs/${selectedId}/enabled`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !form.enabled }) }, 8000)
+      setForm({ ...EMPTY_ANALYSIS_CONFIG, ...payload.config })
+      await load()
+    } catch (error) { setMessage({ ok: false, text: `切换失败：${error.message}` }) }
+  }
+
+  const remove = async () => {
+    if (!selectedId || !window.confirm(`删除配置“${form.name}”？历史任务会保留，但密钥将被删除。`)) return
+    try {
+      await fetchJSON(`/admin/api/alert-analysis/configs/${selectedId}`, { method: 'DELETE' }, 8000)
+      newConfig()
+      setMessage({ ok: true, text: '配置已删除，历史任务仍保留' })
+      await load()
+    } catch (error) { setMessage({ ok: false, text: `删除失败：${error.message}` }) }
+  }
+
+  const rotate = async () => {
+    if (!selectedId) return
+    try {
+      const payload = await fetchJSON(`/admin/api/alert-analysis/configs/${selectedId}/rotate-token`, { method: 'POST' }, 8000)
+      setIngestURL(payload.ingest_url || '')
+      setMessage({ ok: true, text: '接收 Token 已轮换，旧地址立即失效，请更新 SLS 行动策略' })
+    } catch (error) { setMessage({ ok: false, text: `轮换失败：${error.message}` }) }
+  }
+
+  const test = async (kind) => {
+    if (!selectedId) { setMessage({ ok: false, text: '请先保存配置再测试连接' }); return }
+    setBusy(true)
+    try {
+      await fetchJSON(`/admin/api/alert-analysis/configs/${selectedId}/test/${kind}`, { method: 'POST' }, 35000)
+      setMessage({ ok: true, text: `${kind.toUpperCase()} 连接测试成功` })
+    } catch (error) { setMessage({ ok: false, text: `连接测试失败：${error.message}` }) }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <section className="panel">
+      <div className="section-head"><div><h2>告警配置</h2><p>每条配置生成独立 SLS 接收地址；仓库访问复用全局 Gitea Token</p></div><IconButton icon={BellRing} onClick={newConfig}>新建配置</IconButton></div>
+      <Message message={message} />
+      {ingestURL ? <div className="ingest-banner"><code>{ingestURL}</code><IconButton icon={Copy} onClick={() => navigator.clipboard.writeText(ingestURL)}>复制地址</IconButton></div> : null}
+      <div className="analysis-config-layout">
+        <aside className="analysis-config-list">
+          {configs.map((config) => <button key={config.id} className={selectedId === config.id ? 'active' : ''} type="button" onClick={() => selectConfig(config)}><strong>{config.name}</strong><span>{config.repository_ref} · {config.sls_logstore}</span><StatusBadge status={config.enabled ? 'enabled' : 'disabled'} /></button>)}
+          {!configs.length ? <div className="empty-state compact">还没有告警配置</div> : null}
+        </aside>
+        <div className="analysis-config-form">
+          <div className="config-form-head"><div><h3>{selectedId ? `编辑配置 #${selectedId}` : '新建告警配置'}</h3><p>密钥字段留空或显示 ***set*** 时保持原值</p></div><div className="toolbar"><IconButton icon={Save} onClick={save} disabled={busy}>保存</IconButton>{selectedId ? <><IconButton icon={RefreshCw} onClick={toggle}>{form.enabled ? '停用' : '启用'}</IconButton><IconButton icon={Trash2} className="danger" onClick={remove}>删除</IconButton></> : null}</div></div>
+          <ConfigSection title="基本与仓库">
+            <AnalysisField label="配置名称" value={form.name} onChange={(v) => setField('name', v)} />
+            <AnalysisField label="仓库 Clone URL" value={form.repository_url} onChange={(v) => setField('repository_url', v)} />
+            <AnalysisField label="目标分支 / SHA" value={form.repository_ref} onChange={(v) => setField('repository_ref', v)} />
+          </ConfigSection>
+          <ConfigSection title="阿里云 SLS">
+            <AnalysisField label="Endpoint" value={form.sls_endpoint} onChange={(v) => setField('sls_endpoint', v)} />
+            <AnalysisField label="Project" value={form.sls_project} onChange={(v) => setField('sls_project', v)} />
+            <AnalysisField label="原始 Logstore" value={form.sls_logstore} onChange={(v) => setField('sls_logstore', v)} />
+            <AnalysisField label="AccessKey ID" value={form.sls_access_key_id} secret onChange={(v) => setField('sls_access_key_id', v)} />
+            <AnalysisField label="AccessKey Secret" value={form.sls_access_key_secret} secret onChange={(v) => setField('sls_access_key_secret', v)} />
+            <AnalysisField label="查询窗口（秒）" value={form.log_window_seconds} type="number" onChange={(v) => setField('log_window_seconds', Number(v))} />
+          </ConfigSection>
+          <ConfigSection title="飞书与分析">
+            <AnalysisField label="飞书 Webhook" value={form.feishu_webhook} secret onChange={(v) => setField('feishu_webhook', v)} />
+            <AnalysisField label="模型（留空复用全局）" value={form.model} onChange={(v) => setField('model', v)} />
+            <AnalysisField label="思考强度" value={form.reasoning_effort} onChange={(v) => setField('reasoning_effort', v)} />
+            <AnalysisField label="超时（秒）" value={form.timeout_seconds} type="number" onChange={(v) => setField('timeout_seconds', Number(v))} />
+          </ConfigSection>
+          <ConfigSection title="连续相同告警节流">
+            <label className="field"><span>是否启用</span><select value={String(form.throttle_enabled)} onChange={(event) => setField('throttle_enabled', event.target.value === 'true')}><option value="true">启用</option><option value="false">关闭</option></select></label>
+            <AnalysisField label="相同报错分析次数" value={form.throttle_threshold} type="number" onChange={(v) => setField('throttle_threshold', Number(v))} />
+            <AnalysisField label="重新分析间隔（秒，0=直到报错变化）" value={form.throttle_cooldown_seconds} type="number" onChange={(v) => setField('throttle_cooldown_seconds', Number(v))} />
+            <AnalysisField label="指纹字段" value={form.throttle_fields} onChange={(v) => setField('throttle_fields', v)} />
+          </ConfigSection>
+          <label className="field full-field"><span>项目补充 Prompt</span><textarea rows="5" value={form.prompt || ''} onChange={(event) => setField('prompt', event.target.value)} /></label>
+          <div className="toolbar config-test-toolbar"><IconButton icon={Send} onClick={() => test('repo')} disabled={busy}>测试仓库</IconButton><IconButton icon={Send} onClick={() => test('sls')} disabled={busy}>测试 SLS</IconButton><IconButton icon={Send} onClick={() => test('feishu')} disabled={busy}>测试飞书</IconButton>{selectedId ? <IconButton icon={RefreshCw} onClick={rotate}>轮换接收地址</IconButton> : null}</div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function ConfigSection({ title, children }) {
+  return <section className="analysis-config-section"><h4>{title}</h4><div className="form-grid">{children}</div></section>
+}
+
+function AnalysisField({ label, value, onChange, secret = false, type = 'text' }) {
+  return <label className="field"><span>{label}</span><input type={secret && value !== REDACTED ? 'password' : type} value={value ?? ''} onChange={(event) => onChange(event.target.value)} /></label>
 }
 
 function SkillsPanel() {
@@ -1614,6 +1983,7 @@ function ConfigPanel() {
       <ConfigGroup title="Codex" keys={FIELD_GROUPS.codex} settings={settings} fieldMeta={fieldMeta} setField={setField} onSave={() => saveGroup(FIELD_GROUPS.codex, 'Codex 设置')} />
       <ConfigGroup title="Claude" keys={FIELD_GROUPS.claude} settings={settings} fieldMeta={fieldMeta} setField={setField} onSave={() => saveGroup(FIELD_GROUPS.claude, 'Claude 设置')} />
       <ConfigGroup title="MiniMax" keys={FIELD_GROUPS.minimax} settings={settings} fieldMeta={fieldMeta} setField={setField} onSave={() => saveGroup(FIELD_GROUPS.minimax, 'MiniMax 设置')} />
+      <ConfigGroup title="告警 Git 缓存" keys={FIELD_GROUPS.analysisCache} settings={settings} fieldMeta={fieldMeta} setField={setField} onSave={() => saveGroup(FIELD_GROUPS.analysisCache, '告警 Git 缓存设置')} />
 
       <section className="config-group">
         <div className="group-head">

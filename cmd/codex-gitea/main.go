@@ -21,6 +21,7 @@ import (
 	"github.com/turning4th/codex-gitea/internal/console"
 	"github.com/turning4th/codex-gitea/internal/gitcache"
 	"github.com/turning4th/codex-gitea/internal/gitea"
+	"github.com/turning4th/codex-gitea/internal/incident"
 	"github.com/turning4th/codex-gitea/internal/model"
 	"github.com/turning4th/codex-gitea/internal/queue"
 	"github.com/turning4th/codex-gitea/internal/review"
@@ -33,7 +34,7 @@ func main() {
 
 	cfg := config.LoadEnv()
 
-	st, err := store.Open(cfg.DBPath)
+	st, err := store.Open(cfg.DBPath, store.WithSecretKey(cfg.SecretKey))
 	if err != nil {
 		logger.Fatalf("open store: %v", err)
 	}
@@ -89,9 +90,23 @@ func main() {
 			Timeout: snap.GiteaTimeout,
 		}
 	})
-	cache := gitcache.New(cfg.CacheDir, cfg.WorkDir, gitcache.WithTokenFunc(func() (string, error) {
-		return configSnapshot().GiteaToken, nil
-	}))
+	cache := gitcache.New(cfg.CacheDir, cfg.WorkDir,
+		gitcache.WithTokenFunc(func() (string, error) {
+			return configSnapshot().GiteaToken, nil
+		}),
+		gitcache.WithIncidentCachePolicyFunc(func() gitcache.IncidentCachePolicy {
+			snap := configSnapshot()
+			return gitcache.IncidentCachePolicy{
+				FetchDepth:      snap.AnalysisGitFetchDepth,
+				MaxRepositories: snap.AnalysisCacheMaxRepositories,
+				MaxBytes:        snap.AnalysisCacheMaxMB << 20,
+				MaxIdle:         snap.AnalysisCacheMaxIdle,
+				WorktreeTTL:     snap.AnalysisWorktreeTTL,
+				CleanupInterval: snap.AnalysisCacheCleanupInterval,
+				MinFreeBytes:    snap.AnalysisMinFreeMB << 20,
+			}
+		}),
+	)
 
 	orch := &review.Orchestrator{
 		Store:         st,
@@ -108,6 +123,40 @@ func main() {
 	}
 
 	q := queue.New(st, orch, cfg.Concurrency, logger)
+	incidentLogs := incident.AliyunSLSFetcher{}
+	incidentNotifier := incident.FeishuWebhookNotifier{ConsoleBaseURL: os.Getenv("PUBLIC_URL")}
+	incidentProcessor := &incident.Processor{
+		Store: st,
+		Logs:  incidentLogs,
+		Cache: cache,
+		Analyze: func(ctx context.Context, worktree, prompt string, analysisCfg model.AnalysisConfig) (string, error) {
+			snap := configSnapshot()
+			timeout := snap.Timeout
+			if analysisCfg.TimeoutSeconds > 0 {
+				timeout = time.Duration(analysisCfg.TimeoutSeconds) * time.Second
+			}
+			modelName := analysisCfg.Model
+			if strings.TrimSpace(modelName) == "" {
+				modelName = snap.Model
+			}
+			reasoning := analysisCfg.ReasoningEffort
+			if strings.TrimSpace(reasoning) == "" {
+				reasoning = snap.CodexReasoningEffort
+			}
+			runner := codex.New(codex.Options{
+				CodexHome: snap.CodexHome, Model: modelName, ReasoningEffort: reasoning,
+				BaseURL: codexBaseURLForDirectMode(snap), APIKey: codexAPIKeyForMode(snap),
+				CCSwitchConfigDir: snap.CCSwitchConfigDir, CCSwitchBaseURL: snap.CodexBaseURL,
+				UseCCSwitch:        snap.CodexAuthMode == config.AuthModeCCSwitch,
+				CCSwitchProviderID: codexProviderForMode(snap), SandboxMode: snap.CodexSandbox,
+				Timeout: timeout,
+			})
+			return runner.GenerateText(ctx, worktree, prompt)
+		},
+		Notifier: incidentNotifier,
+	}
+	incidentQ := incident.NewQueue(st, incidentProcessor, 2, logger)
+	incidentHandler := &incident.Handler{Store: st, Wake: incidentQ.Notify, NotifySuppressed: incidentQ.NotifySuppressed}
 
 	// Webhook -> enqueue (fast, then 200).
 	onEvent := func(ctx context.Context, ev *model.WebhookEvent) error {
@@ -157,10 +206,21 @@ func main() {
 		console.ChatProbeFunc(func(ctx context.Context, in console.ChatProbeInput) (string, error) {
 			return runChatProbe(ctx, configSnapshot(), in)
 		}),
+		console.AnalysisDependencies{
+			Store: st, Control: incidentQ,
+			Tests: console.AnalysisTestFuncs{
+				SLS:    incidentLogs.Test,
+				Feishu: incidentNotifier.Test,
+				Repo: func(ctx context.Context, cfg model.AnalysisConfig) error {
+					return incident.TestRepository(ctx, cache, cfg)
+				},
+			},
+		},
 	)
 
 	root := http.NewServeMux()
 	root.Handle("/webhook", wh)
+	root.Handle("/hooks/alert-analysis/", incidentHandler)
 	root.Handle("/healthz", wh)
 	root.HandleFunc("/readyz", readyzHandler(st, configSnapshot))
 	root.Handle("/admin/", cons.Routes())
@@ -179,7 +239,21 @@ func main() {
 	}()
 
 	go func() {
-		logger.Printf("listening on %s (webhook=/webhook, console=/admin/)", cfg.ListenAddr)
+		logger.Printf("incident worker pool starting (concurrency=2)")
+		if err := incidentQ.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Printf("incident queue stopped: %v", err)
+		}
+	}()
+
+	go func() {
+		logger.Printf("incident git cache janitor starting")
+		if err := cache.RunIncidentJanitor(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Printf("incident git cache janitor stopped: %v", err)
+		}
+	}()
+
+	go func() {
+		logger.Printf("listening on %s (webhook=/webhook, alert-analysis=/hooks/alert-analysis/, console=/admin/)", cfg.ListenAddr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Fatalf("http server: %v", err)
 		}

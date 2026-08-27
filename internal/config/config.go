@@ -29,25 +29,32 @@ const (
 
 // Defaults applied when neither env nor DB settings provide a value.
 const (
-	DefaultListenAddr      = ":8080"
-	DefaultDBPath          = "/data/codex-gitea.db"
-	DefaultCacheDir        = "/cache"
-	DefaultWorkDir         = "/work"
-	DefaultCodexHome       = "/codex-home"
-	DefaultClaudeHome      = "/claude-home"
-	DefaultCCSwitchDir     = "/cc-switch"
-	DefaultModel           = "gpt-5-codex"
-	DefaultClaudeModel     = "sonnet"
-	DefaultMiniMaxModel    = ""
-	DefaultMiniMaxProvider = ""
-	DefaultAuthMode        = AuthModeCCSwitch
-	DefaultReasoningEffort = "high"
-	DefaultSandboxMode     = SandboxReadOnly
-	DefaultConcurrency     = 5
-	DefaultTimeout         = 30 * time.Minute
-	DefaultGiteaTimeout    = 90 * time.Second
-	DefaultClaudeBudget    = 0.30
-	DefaultMiniMaxBudget   = 0.30
+	DefaultListenAddr                   = ":8080"
+	DefaultDBPath                       = "/data/codex-gitea.db"
+	DefaultCacheDir                     = "/cache"
+	DefaultWorkDir                      = "/work"
+	DefaultCodexHome                    = "/codex-home"
+	DefaultClaudeHome                   = "/claude-home"
+	DefaultCCSwitchDir                  = "/cc-switch"
+	DefaultModel                        = "gpt-5-codex"
+	DefaultClaudeModel                  = "sonnet"
+	DefaultMiniMaxModel                 = ""
+	DefaultMiniMaxProvider              = ""
+	DefaultAuthMode                     = AuthModeCCSwitch
+	DefaultReasoningEffort              = "high"
+	DefaultSandboxMode                  = SandboxReadOnly
+	DefaultConcurrency                  = 5
+	DefaultTimeout                      = 30 * time.Minute
+	DefaultGiteaTimeout                 = 90 * time.Second
+	DefaultClaudeBudget                 = 0.30
+	DefaultMiniMaxBudget                = 0.30
+	DefaultAnalysisGitFetchDepth        = 200
+	DefaultAnalysisCacheMaxRepositories = 3
+	DefaultAnalysisCacheMaxMB           = 5 * 1024
+	DefaultAnalysisCacheMaxIdle         = 7 * 24 * time.Hour
+	DefaultAnalysisWorktreeTTL          = time.Hour
+	DefaultAnalysisCacheCleanupInterval = 10 * time.Minute
+	DefaultAnalysisMinFreeMB            = 1024
 )
 
 // DefaultTriggerKeywords are the comment phrases that trigger a review.
@@ -104,6 +111,15 @@ type Config struct {
 	RepoAllowlist   []string
 	Timeout         time.Duration
 
+	// Alert-analysis Git cache. These values are hot-reloadable from DB settings.
+	AnalysisGitFetchDepth        int
+	AnalysisCacheMaxRepositories int
+	AnalysisCacheMaxMB           int64
+	AnalysisCacheMaxIdle         time.Duration
+	AnalysisWorktreeTTL          time.Duration
+	AnalysisCacheCleanupInterval time.Duration
+	AnalysisMinFreeMB            int64
+
 	// SecretKey optionally encrypts secret columns in the DB. Empty = no encryption.
 	SecretKey string
 }
@@ -123,42 +139,49 @@ func (c *Config) Clone() *Config {
 // for any variable that is unset or empty.
 func LoadEnv() *Config {
 	c := &Config{
-		ListenAddr:            getEnv("LISTEN_ADDR", DefaultListenAddr),
-		DBPath:                getEnv("DB_PATH", DefaultDBPath),
-		CacheDir:              getEnv("CACHE_DIR", DefaultCacheDir),
-		WorkDir:               getEnv("WORK_DIR", DefaultWorkDir),
-		CodexHome:             getEnv("CODEX_HOME", DefaultCodexHome),
-		GiteaURL:              os.Getenv("GITEA_URL"),
-		GiteaToken:            os.Getenv("GITEA_TOKEN"),
-		WebhookSecret:         os.Getenv("WEBHOOK_SECRET"),
-		GiteaTimeout:          parseDuration(os.Getenv("GITEA_TIMEOUT"), DefaultGiteaTimeout),
-		Model:                 getEnv("MODEL", DefaultModel),
-		CodexReasoningEffort:  DefaultReasoningEffort,
-		CodexBaseURL:          strings.TrimSpace(os.Getenv("CODEX_BASE_URL")),
-		CodexAuthMode:         normalizeAuthMode(getEnv("CODEX_AUTH_MODE", DefaultAuthMode)),
-		CodexAPIKey:           os.Getenv("CODEX_API_KEY"),
-		CodexCCSwitchProvider: os.Getenv("CODEX_CC_SWITCH_PROVIDER_ID"),
-		CodexSandbox:          normalizeSandboxMode(getEnv("CODEX_SANDBOX_MODE", DefaultSandboxMode)),
-		ClaudeEnabled:         parseBool(os.Getenv("CLAUDE_ENABLED"), false),
-		ClaudeModel:           getEnv("CLAUDE_MODEL", DefaultClaudeModel),
-		ClaudeAPIKey:          os.Getenv("CLAUDE_API_KEY"),
-		ClaudeBaseURL:         os.Getenv("CLAUDE_BASE_URL"),
-		ClaudeHome:            getEnv("CLAUDE_HOME", DefaultClaudeHome),
-		CCSwitchConfigDir:     getEnv("CC_SWITCH_CONFIG_DIR", DefaultCCSwitchDir),
-		CCSwitchProvider:      os.Getenv("CC_SWITCH_PROVIDER_ID"),
-		ClaudeMaxBudgetUSD:    parseFloat(os.Getenv("CLAUDE_MAX_BUDGET_USD"), DefaultClaudeBudget),
-		MiniMaxEnabled:        parseBool(os.Getenv("MINIMAX_ENABLED"), false),
-		MiniMaxModel:          getEnv("MINIMAX_MODEL", DefaultMiniMaxModel),
-		MiniMaxProvider:       getEnv("MINIMAX_PROVIDER_ID", DefaultMiniMaxProvider),
-		MiniMaxAPIKey:         os.Getenv("MINIMAX_API_KEY"),
-		MiniMaxBaseURL:        os.Getenv("MINIMAX_BASE_URL"),
-		MiniMaxMaxBudgetUSD:   parseFloat(os.Getenv("MINIMAX_MAX_BUDGET_USD"), DefaultMiniMaxBudget),
-		AdminPassword:         os.Getenv("ADMIN_PASSWORD"),
-		TriggerKeywords:       parseList(os.Getenv("TRIGGER_KEYWORDS"), DefaultTriggerKeywords),
-		Concurrency:           parseInt(os.Getenv("CONCURRENCY"), DefaultConcurrency),
-		RepoAllowlist:         parseList(os.Getenv("REPO_ALLOWLIST"), nil),
-		Timeout:               parseDuration(os.Getenv("TIMEOUT"), DefaultTimeout),
-		SecretKey:             os.Getenv("SECRET_KEY"),
+		ListenAddr:                   getEnv("LISTEN_ADDR", DefaultListenAddr),
+		DBPath:                       getEnv("DB_PATH", DefaultDBPath),
+		CacheDir:                     getEnv("CACHE_DIR", DefaultCacheDir),
+		WorkDir:                      getEnv("WORK_DIR", DefaultWorkDir),
+		CodexHome:                    getEnv("CODEX_HOME", DefaultCodexHome),
+		GiteaURL:                     os.Getenv("GITEA_URL"),
+		GiteaToken:                   os.Getenv("GITEA_TOKEN"),
+		WebhookSecret:                os.Getenv("WEBHOOK_SECRET"),
+		GiteaTimeout:                 parseDuration(os.Getenv("GITEA_TIMEOUT"), DefaultGiteaTimeout),
+		Model:                        getEnv("MODEL", DefaultModel),
+		CodexReasoningEffort:         DefaultReasoningEffort,
+		CodexBaseURL:                 strings.TrimSpace(os.Getenv("CODEX_BASE_URL")),
+		CodexAuthMode:                normalizeAuthMode(getEnv("CODEX_AUTH_MODE", DefaultAuthMode)),
+		CodexAPIKey:                  os.Getenv("CODEX_API_KEY"),
+		CodexCCSwitchProvider:        os.Getenv("CODEX_CC_SWITCH_PROVIDER_ID"),
+		CodexSandbox:                 normalizeSandboxMode(getEnv("CODEX_SANDBOX_MODE", DefaultSandboxMode)),
+		ClaudeEnabled:                parseBool(os.Getenv("CLAUDE_ENABLED"), false),
+		ClaudeModel:                  getEnv("CLAUDE_MODEL", DefaultClaudeModel),
+		ClaudeAPIKey:                 os.Getenv("CLAUDE_API_KEY"),
+		ClaudeBaseURL:                os.Getenv("CLAUDE_BASE_URL"),
+		ClaudeHome:                   getEnv("CLAUDE_HOME", DefaultClaudeHome),
+		CCSwitchConfigDir:            getEnv("CC_SWITCH_CONFIG_DIR", DefaultCCSwitchDir),
+		CCSwitchProvider:             os.Getenv("CC_SWITCH_PROVIDER_ID"),
+		ClaudeMaxBudgetUSD:           parseFloat(os.Getenv("CLAUDE_MAX_BUDGET_USD"), DefaultClaudeBudget),
+		MiniMaxEnabled:               parseBool(os.Getenv("MINIMAX_ENABLED"), false),
+		MiniMaxModel:                 getEnv("MINIMAX_MODEL", DefaultMiniMaxModel),
+		MiniMaxProvider:              getEnv("MINIMAX_PROVIDER_ID", DefaultMiniMaxProvider),
+		MiniMaxAPIKey:                os.Getenv("MINIMAX_API_KEY"),
+		MiniMaxBaseURL:               os.Getenv("MINIMAX_BASE_URL"),
+		MiniMaxMaxBudgetUSD:          parseFloat(os.Getenv("MINIMAX_MAX_BUDGET_USD"), DefaultMiniMaxBudget),
+		AdminPassword:                os.Getenv("ADMIN_PASSWORD"),
+		TriggerKeywords:              parseList(os.Getenv("TRIGGER_KEYWORDS"), DefaultTriggerKeywords),
+		Concurrency:                  parseInt(os.Getenv("CONCURRENCY"), DefaultConcurrency),
+		RepoAllowlist:                parseList(os.Getenv("REPO_ALLOWLIST"), nil),
+		Timeout:                      parseDuration(os.Getenv("TIMEOUT"), DefaultTimeout),
+		AnalysisGitFetchDepth:        parseInt(os.Getenv("ANALYSIS_GIT_FETCH_DEPTH"), DefaultAnalysisGitFetchDepth),
+		AnalysisCacheMaxRepositories: parseInt(os.Getenv("ANALYSIS_CACHE_MAX_REPOSITORIES"), DefaultAnalysisCacheMaxRepositories),
+		AnalysisCacheMaxMB:           parseInt64(os.Getenv("ANALYSIS_CACHE_MAX_MB"), DefaultAnalysisCacheMaxMB),
+		AnalysisCacheMaxIdle:         parseDuration(os.Getenv("ANALYSIS_CACHE_MAX_IDLE"), DefaultAnalysisCacheMaxIdle),
+		AnalysisWorktreeTTL:          parseDuration(os.Getenv("ANALYSIS_WORKTREE_TTL"), DefaultAnalysisWorktreeTTL),
+		AnalysisCacheCleanupInterval: parseDuration(os.Getenv("ANALYSIS_CACHE_CLEANUP_INTERVAL"), DefaultAnalysisCacheCleanupInterval),
+		AnalysisMinFreeMB:            parseInt64(os.Getenv("ANALYSIS_MIN_FREE_MB"), DefaultAnalysisMinFreeMB),
+		SecretKey:                    os.Getenv("SECRET_KEY"),
 	}
 	return c
 }
@@ -274,6 +297,27 @@ func (c *Config) ApplyOverrides(settings map[string]string) {
 	if v, ok := settings["timeout"]; ok {
 		c.Timeout = parseDuration(v, c.Timeout)
 	}
+	if v, ok := settings["analysis_git_fetch_depth"]; ok {
+		c.AnalysisGitFetchDepth = parseInt(v, c.AnalysisGitFetchDepth)
+	}
+	if v, ok := settings["analysis_cache_max_repositories"]; ok {
+		c.AnalysisCacheMaxRepositories = parseInt(v, c.AnalysisCacheMaxRepositories)
+	}
+	if v, ok := settings["analysis_cache_max_mb"]; ok {
+		c.AnalysisCacheMaxMB = parseInt64(v, c.AnalysisCacheMaxMB)
+	}
+	if v, ok := settings["analysis_cache_max_idle"]; ok {
+		c.AnalysisCacheMaxIdle = parseDuration(v, c.AnalysisCacheMaxIdle)
+	}
+	if v, ok := settings["analysis_worktree_ttl"]; ok {
+		c.AnalysisWorktreeTTL = parseDuration(v, c.AnalysisWorktreeTTL)
+	}
+	if v, ok := settings["analysis_cache_cleanup_interval"]; ok {
+		c.AnalysisCacheCleanupInterval = parseDuration(v, c.AnalysisCacheCleanupInterval)
+	}
+	if v, ok := settings["analysis_min_free_mb"]; ok {
+		c.AnalysisMinFreeMB = parseInt64(v, c.AnalysisMinFreeMB)
+	}
 }
 
 // Validate checks for fatal configuration problems. It returns an error only for
@@ -309,6 +353,32 @@ func (c *Config) Validate() error {
 	}
 	if c.GiteaTimeout <= 0 {
 		return fmt.Errorf("gitea_timeout must be > 0, got %s", c.GiteaTimeout)
+	}
+	// A fully zero cache block is accepted for compatibility with callers that
+	// construct Config directly in tests/tools. LoadEnv always populates it.
+	if c.AnalysisGitFetchDepth != 0 || c.AnalysisCacheMaxRepositories != 0 || c.AnalysisCacheMaxMB != 0 ||
+		c.AnalysisCacheMaxIdle != 0 || c.AnalysisWorktreeTTL != 0 || c.AnalysisCacheCleanupInterval != 0 || c.AnalysisMinFreeMB != 0 {
+		if c.AnalysisGitFetchDepth < 1 {
+			return fmt.Errorf("analysis_git_fetch_depth must be >= 1, got %d", c.AnalysisGitFetchDepth)
+		}
+		if c.AnalysisCacheMaxRepositories < 1 {
+			return fmt.Errorf("analysis_cache_max_repositories must be >= 1, got %d", c.AnalysisCacheMaxRepositories)
+		}
+		if c.AnalysisCacheMaxMB < 1 {
+			return fmt.Errorf("analysis_cache_max_mb must be >= 1, got %d", c.AnalysisCacheMaxMB)
+		}
+		if c.AnalysisCacheMaxIdle <= 0 {
+			return fmt.Errorf("analysis_cache_max_idle must be > 0, got %s", c.AnalysisCacheMaxIdle)
+		}
+		if c.AnalysisWorktreeTTL <= 0 {
+			return fmt.Errorf("analysis_worktree_ttl must be > 0, got %s", c.AnalysisWorktreeTTL)
+		}
+		if c.AnalysisCacheCleanupInterval <= 0 {
+			return fmt.Errorf("analysis_cache_cleanup_interval must be > 0, got %s", c.AnalysisCacheCleanupInterval)
+		}
+		if c.AnalysisMinFreeMB < 0 {
+			return fmt.Errorf("analysis_min_free_mb must be >= 0, got %d", c.AnalysisMinFreeMB)
+		}
 	}
 	if c.ClaudeMaxBudgetUSD < 0 {
 		return fmt.Errorf("claude_max_budget_usd must be >= 0, got %g", c.ClaudeMaxBudgetUSD)
@@ -371,6 +441,17 @@ func parseInt(s string, def int) int {
 		return def
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+func parseInt64(s string, def int64) int64 {
+	if strings.TrimSpace(s) == "" {
+		return def
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
 	if err != nil {
 		return def
 	}

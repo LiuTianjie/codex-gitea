@@ -1,10 +1,4 @@
-// Package gitcache manages per-repository bare mirrors and throwaway worktrees.
-//
-// Each repository is cloned once as a bare --mirror (so large repos are never
-// re-cloned), then incrementally fetched on each event. Worktrees are checked
-// out at deterministic paths so codex can resume against a stable cwd, and are
-// torn down after review while the mirror is retained. Fetch/worktree work is
-// serialized per repository via a keyed mutex.
+// Package gitcache manages per-repository bare caches and throwaway worktrees.
 package gitcache
 
 import (
@@ -28,7 +22,9 @@ type Cache struct {
 	// `-c http.extraHeader=...`. It is never written to any .git/config.
 	tokenFunc func() (string, error)
 
-	locks *keyedMutex
+	locks          *keyedMutex
+	incidentPolicy func() IncidentCachePolicy
+	incidentState  incidentCacheState
 }
 
 var _ model.GitCache = (*Cache)(nil)
@@ -51,15 +47,28 @@ func WithTokenFunc(f func() (string, error)) Option {
 	return func(c *Cache) { c.tokenFunc = f }
 }
 
+// WithIncidentCachePolicyFunc supplies a live policy for alert-analysis Git
+// caches. It is evaluated for every fetch and janitor pass so console changes
+// apply without restarting the service.
+func WithIncidentCachePolicyFunc(f func() IncidentCachePolicy) Option {
+	return func(c *Cache) { c.incidentPolicy = f }
+}
+
 // New returns a Cache rooted at cacheDir (mirrors) and workDir (worktrees).
 func New(cacheDir, workDir string, opts ...Option) *Cache {
 	c := &Cache{
 		cacheDir: cacheDir,
 		workDir:  workDir,
 		locks:    newKeyedMutex(),
+		incidentState: incidentCacheState{
+			active: make(map[string]int),
+		},
 	}
 	for _, o := range opts {
 		o(c)
+	}
+	if c.incidentPolicy == nil {
+		c.incidentPolicy = DefaultIncidentCachePolicy
 	}
 	return c
 }
@@ -158,11 +167,16 @@ func (c *Cache) cleanWorktree(ctx context.Context, mirror, wt string) error {
 // `-c http.extraHeader`, keeping it out of any persisted config and out of
 // error messages (only the non-credential args are echoed).
 func (c *Cache) runGit(ctx context.Context, useToken bool, args ...string) error {
+	_, err := c.runGitOutput(ctx, useToken, args...)
+	return err
+}
+
+func (c *Cache) runGitOutput(ctx context.Context, useToken bool, args ...string) (string, error) {
 	full := make([]string, 0, len(args)+2)
 	if useToken && c.tokenFunc != nil {
 		tok, err := c.tokenFunc()
 		if err != nil {
-			return fmt.Errorf("obtain git token: %w", err)
+			return "", fmt.Errorf("obtain git token: %w", err)
 		}
 		if tok != "" {
 			full = append(full, "-c", "http.extraHeader=Authorization: token "+tok)
@@ -171,16 +185,18 @@ func (c *Cache) runGit(ctx context.Context, useToken bool, args ...string) error
 	full = append(full, args...)
 
 	cmd := exec.CommandContext(ctx, "git", full...)
+	var stdout bytes.Buffer
 	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
-			return fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+			return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 		}
-		return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, msg)
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, msg)
 	}
-	return nil
+	return stdout.String(), nil
 }
 
 // dirExists reports whether p exists and is a directory.

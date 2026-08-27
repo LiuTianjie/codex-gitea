@@ -25,6 +25,8 @@ func TestLoadEnvDefaults(t *testing.T) {
 		"CLAUDE_ENABLED", "CLAUDE_MODEL", "CLAUDE_API_KEY", "CLAUDE_BASE_URL",
 		"CLAUDE_HOME", "CC_SWITCH_CONFIG_DIR", "CC_SWITCH_PROVIDER_ID", "CLAUDE_MAX_BUDGET_USD",
 		"MINIMAX_ENABLED", "MINIMAX_MODEL", "MINIMAX_PROVIDER_ID", "MINIMAX_API_KEY", "MINIMAX_BASE_URL", "MINIMAX_MAX_BUDGET_USD",
+		"ANALYSIS_GIT_FETCH_DEPTH", "ANALYSIS_CACHE_MAX_REPOSITORIES", "ANALYSIS_CACHE_MAX_MB",
+		"ANALYSIS_CACHE_MAX_IDLE", "ANALYSIS_WORKTREE_TTL", "ANALYSIS_CACHE_CLEANUP_INTERVAL", "ANALYSIS_MIN_FREE_MB",
 	} {
 		t.Setenv(k, "")
 	}
@@ -76,6 +78,15 @@ func TestLoadEnvDefaults(t *testing.T) {
 	if c.GiteaTimeout != DefaultGiteaTimeout {
 		t.Errorf("GiteaTimeout = %s, want %s", c.GiteaTimeout, DefaultGiteaTimeout)
 	}
+	if c.AnalysisGitFetchDepth != DefaultAnalysisGitFetchDepth ||
+		c.AnalysisCacheMaxRepositories != DefaultAnalysisCacheMaxRepositories ||
+		c.AnalysisCacheMaxMB != DefaultAnalysisCacheMaxMB ||
+		c.AnalysisCacheMaxIdle != DefaultAnalysisCacheMaxIdle ||
+		c.AnalysisWorktreeTTL != DefaultAnalysisWorktreeTTL ||
+		c.AnalysisCacheCleanupInterval != DefaultAnalysisCacheCleanupInterval ||
+		c.AnalysisMinFreeMB != DefaultAnalysisMinFreeMB {
+		t.Errorf("analysis cache defaults not loaded: %+v", c)
+	}
 	if len(c.TriggerKeywords) != len(DefaultTriggerKeywords) {
 		t.Fatalf("TriggerKeywords = %v, want %v", c.TriggerKeywords, DefaultTriggerKeywords)
 	}
@@ -91,41 +102,48 @@ func TestLoadEnvDefaults(t *testing.T) {
 
 func TestLoadEnvValues(t *testing.T) {
 	setEnv(t, map[string]string{
-		"LISTEN_ADDR":                 ":9090",
-		"DB_PATH":                     "/tmp/db.sqlite",
-		"CACHE_DIR":                   "/tmp/cache",
-		"WORK_DIR":                    "/tmp/work",
-		"CODEX_HOME":                  "/tmp/codex",
-		"GITEA_URL":                   "https://git.example.com",
-		"GITEA_TOKEN":                 "tok-123",
-		"GITEA_TIMEOUT":               "45s",
-		"WEBHOOK_SECRET":              "whsec",
-		"MODEL":                       "gpt-5",
-		"CODEX_BASE_URL":              "https://codex-relay.example.com/v1",
-		"CODEX_AUTH_MODE":             "apikey",
-		"CODEX_API_KEY":               "sk-abc",
-		"CODEX_SANDBOX_MODE":          "danger-full-access",
-		"CODEX_CC_SWITCH_PROVIDER_ID": "codex-relay",
-		"CLAUDE_ENABLED":              "true",
-		"CLAUDE_MODEL":                "claude-opus-4-6-thinking",
-		"CLAUDE_API_KEY":              "ak-claude",
-		"CLAUDE_BASE_URL":             "https://llm.example.com",
-		"CLAUDE_HOME":                 "/tmp/claude",
-		"CC_SWITCH_CONFIG_DIR":        "/tmp/cc-switch",
-		"CC_SWITCH_PROVIDER_ID":       "relay",
-		"CLAUDE_MAX_BUDGET_USD":       "0.42",
-		"MINIMAX_ENABLED":             "true",
-		"MINIMAX_MODEL":               "minimax-m3",
-		"MINIMAX_PROVIDER_ID":         "minimaxreview",
-		"MINIMAX_API_KEY":             "ak-minimax",
-		"MINIMAX_BASE_URL":            "https://minimax-relay.example.com",
-		"MINIMAX_MAX_BUDGET_USD":      "0.25",
-		"ADMIN_PASSWORD":              "hunter2",
-		"TRIGGER_KEYWORDS":            "/review, @bot , please-review",
-		"CONCURRENCY":                 "5",
-		"REPO_ALLOWLIST":              "acme/widgets, acme/gadgets",
-		"TIMEOUT":                     "30s",
-		"SECRET_KEY":                  "key",
+		"LISTEN_ADDR":                     ":9090",
+		"DB_PATH":                         "/tmp/db.sqlite",
+		"CACHE_DIR":                       "/tmp/cache",
+		"WORK_DIR":                        "/tmp/work",
+		"CODEX_HOME":                      "/tmp/codex",
+		"GITEA_URL":                       "https://git.example.com",
+		"GITEA_TOKEN":                     "tok-123",
+		"GITEA_TIMEOUT":                   "45s",
+		"WEBHOOK_SECRET":                  "whsec",
+		"MODEL":                           "gpt-5",
+		"CODEX_BASE_URL":                  "https://codex-relay.example.com/v1",
+		"CODEX_AUTH_MODE":                 "apikey",
+		"CODEX_API_KEY":                   "sk-abc",
+		"CODEX_SANDBOX_MODE":              "danger-full-access",
+		"CODEX_CC_SWITCH_PROVIDER_ID":     "codex-relay",
+		"CLAUDE_ENABLED":                  "true",
+		"CLAUDE_MODEL":                    "claude-opus-4-6-thinking",
+		"CLAUDE_API_KEY":                  "ak-claude",
+		"CLAUDE_BASE_URL":                 "https://llm.example.com",
+		"CLAUDE_HOME":                     "/tmp/claude",
+		"CC_SWITCH_CONFIG_DIR":            "/tmp/cc-switch",
+		"CC_SWITCH_PROVIDER_ID":           "relay",
+		"CLAUDE_MAX_BUDGET_USD":           "0.42",
+		"MINIMAX_ENABLED":                 "true",
+		"MINIMAX_MODEL":                   "minimax-m3",
+		"MINIMAX_PROVIDER_ID":             "minimaxreview",
+		"MINIMAX_API_KEY":                 "ak-minimax",
+		"MINIMAX_BASE_URL":                "https://minimax-relay.example.com",
+		"MINIMAX_MAX_BUDGET_USD":          "0.25",
+		"ADMIN_PASSWORD":                  "hunter2",
+		"TRIGGER_KEYWORDS":                "/review, @bot , please-review",
+		"CONCURRENCY":                     "5",
+		"REPO_ALLOWLIST":                  "acme/widgets, acme/gadgets",
+		"TIMEOUT":                         "30s",
+		"SECRET_KEY":                      "key",
+		"ANALYSIS_GIT_FETCH_DEPTH":        "80",
+		"ANALYSIS_CACHE_MAX_REPOSITORIES": "4",
+		"ANALYSIS_CACHE_MAX_MB":           "2048",
+		"ANALYSIS_CACHE_MAX_IDLE":         "48h",
+		"ANALYSIS_WORKTREE_TTL":           "30m",
+		"ANALYSIS_CACHE_CLEANUP_INTERVAL": "5m",
+		"ANALYSIS_MIN_FREE_MB":            "512",
 	})
 
 	c := LoadEnv()
@@ -208,6 +226,11 @@ func TestLoadEnvValues(t *testing.T) {
 	if c.SecretKey != "key" {
 		t.Errorf("SecretKey = %q", c.SecretKey)
 	}
+	if c.AnalysisGitFetchDepth != 80 || c.AnalysisCacheMaxRepositories != 4 || c.AnalysisCacheMaxMB != 2048 ||
+		c.AnalysisCacheMaxIdle != 48*time.Hour || c.AnalysisWorktreeTTL != 30*time.Minute ||
+		c.AnalysisCacheCleanupInterval != 5*time.Minute || c.AnalysisMinFreeMB != 512 {
+		t.Errorf("analysis cache env not loaded: %+v", c)
+	}
 }
 
 func TestApplyOverrides(t *testing.T) {
@@ -222,31 +245,38 @@ func TestApplyOverrides(t *testing.T) {
 	}
 
 	c.ApplyOverrides(map[string]string{
-		"gitea_url":                   "https://db.example.com",
-		"gitea_token":                 "db-tok",
-		"gitea_timeout":               "75s",
-		"model":                       "db-model",
-		"codex_reasoning_effort":      "xhigh",
-		"codex_base_url":              "https://db-codex-relay.example.com/v1",
-		"codex_auth_mode":             "apikey",
-		"codex_api_key":               "sk-db",
-		"codex_sandbox_mode":          "workspace-write",
-		"codex_cc_switch_provider_id": "db-codex-relay",
-		"claude_model":                "",
-		"claude_home":                 "",
-		"cc_switch_config_dir":        "",
-		"claude_max_budget_usd":       "0.5",
-		"minimax_enabled":             "true",
-		"minimax_model":               "",
-		"minimax_provider_id":         "",
-		"minimax_api_key":             "ak-db-minimax",
-		"minimax_base_url":            "https://db-minimax.example.com",
-		"minimax_max_budget_usd":      "0.2",
-		"webhook_secret":              "db-secret",
-		"trigger_keywords":            "/lgtm,@review",
-		"concurrency":                 "8",
-		"repo_allowlist":              "a/b",
-		"timeout":                     "5m",
+		"gitea_url":                       "https://db.example.com",
+		"gitea_token":                     "db-tok",
+		"gitea_timeout":                   "75s",
+		"model":                           "db-model",
+		"codex_reasoning_effort":          "xhigh",
+		"codex_base_url":                  "https://db-codex-relay.example.com/v1",
+		"codex_auth_mode":                 "apikey",
+		"codex_api_key":                   "sk-db",
+		"codex_sandbox_mode":              "workspace-write",
+		"codex_cc_switch_provider_id":     "db-codex-relay",
+		"claude_model":                    "",
+		"claude_home":                     "",
+		"cc_switch_config_dir":            "",
+		"claude_max_budget_usd":           "0.5",
+		"minimax_enabled":                 "true",
+		"minimax_model":                   "",
+		"minimax_provider_id":             "",
+		"minimax_api_key":                 "ak-db-minimax",
+		"minimax_base_url":                "https://db-minimax.example.com",
+		"minimax_max_budget_usd":          "0.2",
+		"webhook_secret":                  "db-secret",
+		"trigger_keywords":                "/lgtm,@review",
+		"concurrency":                     "8",
+		"repo_allowlist":                  "a/b",
+		"timeout":                         "5m",
+		"analysis_git_fetch_depth":        "60",
+		"analysis_cache_max_repositories": "2",
+		"analysis_cache_max_mb":           "1024",
+		"analysis_cache_max_idle":         "24h",
+		"analysis_worktree_ttl":           "20m",
+		"analysis_cache_cleanup_interval": "2m",
+		"analysis_min_free_mb":            "256",
 	})
 
 	if c.GiteaURL != "https://db.example.com" {
@@ -257,6 +287,11 @@ func TestApplyOverrides(t *testing.T) {
 	}
 	if c.GiteaTimeout != 75*time.Second {
 		t.Errorf("GiteaTimeout not overridden: %s", c.GiteaTimeout)
+	}
+	if c.AnalysisGitFetchDepth != 60 || c.AnalysisCacheMaxRepositories != 2 || c.AnalysisCacheMaxMB != 1024 ||
+		c.AnalysisCacheMaxIdle != 24*time.Hour || c.AnalysisWorktreeTTL != 20*time.Minute ||
+		c.AnalysisCacheCleanupInterval != 2*time.Minute || c.AnalysisMinFreeMB != 256 {
+		t.Errorf("analysis cache DB overrides not applied: %+v", c)
 	}
 	if c.Model != "db-model" {
 		t.Errorf("Model not overridden: %q", c.Model)

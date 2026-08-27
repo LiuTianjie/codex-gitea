@@ -53,6 +53,9 @@ same reviewer session instead of starting from an empty context every time.
   checked out into deterministic worktrees for each job.
 - **Admin console** — `/admin` shows review jobs, logs, runtime configuration,
   analytics, and project rule exports.
+- **Configurable alert analysis** — receives the structured alerts already sent
+  to Feishu, queries the matching Aliyun SLS raw logs, inspects a configured
+  repository and Git history, and reports progress/results as Feishu cards.
 - **Project rules** — each repository can expose a downloadable `SKILL.md` at
   `/skills/<owner>/<repo>/SKILL.md`.
 - **Readiness endpoint** — `/healthz` is a liveness check; `/readyz` reports DB,
@@ -68,6 +71,18 @@ Gitea webhook
   -> run configured reviewer
   -> map findings to diff lines
   -> publish review through Gitea API
+```
+
+Alert analysis is a separate queue and does not change the PR review lifecycle:
+
+```text
+existing alert action
+  -> keep sending the original Feishu alert
+  -> POST the same alert context to /hooks/alert-analysis/{config_id}/{token}
+  -> query SLS around the alert time
+  -> prepare a read-only repository revision using the global Gitea token
+  -> locate endpoints/tasks, code evidence, commits, and suggested contacts
+  -> send phase cards to the configured Feishu webhook
 ```
 
 ## Reviewer backends
@@ -230,6 +245,82 @@ Usage instruction format:
 请使用这个项目规则文件：https://<host>/skills/<owner>/<repo>/SKILL.md
 ```
 
+### Alert analysis
+
+The **Alert configs** tab creates independent, database-backed configurations.
+Each configuration includes a repository URL/ref, SLS endpoint/project/logstore
+and credentials, a Feishu webhook, optional model/prompt overrides, and a
+duplicate-alert throttle. Repository checkout reuses the global `GITEA_TOKEN`;
+there is no second Gitea token in an alert configuration.
+
+Creating or rotating a configuration returns its full receiver URL once. Add a
+second HTTP action after the existing Feishu alert action and POST structured
+JSON to that URL. The original Feishu action stays unchanged. A minimal payload
+is:
+
+```json
+{
+  "delivery_id": "unique-delivery-id",
+  "alert_id": "sls-alert-id",
+  "alert_time": "2026-08-27T15:30:00+08:00",
+  "environment": "PROD",
+  "service": "serverx",
+  "rule": "server-error-rate",
+  "title": "POST /api/example failed",
+  "severity": "high",
+  "method": "POST",
+  "endpoint": "/api/example",
+  "event_id": "event-id-if-available",
+  "trace_id": "trace-id-if-available",
+  "error_code": "500",
+  "error_message": "short error text",
+  "deployment_sha": "optional-production-git-sha",
+  "detail_url": "optional-alert-detail-url"
+}
+```
+
+`delivery_id` is the idempotency key within one configuration. If omitted, the
+receiver falls back to `X-Alert-Delivery-ID`, then `alert_id`, then a payload
+hash. SLS lookup prefers `event_id` or `trace_id`, falls back to `endpoint`, and
+queries the configured time window around `alert_time` (RFC3339, Unix seconds,
+or Unix milliseconds). Additional JSON fields are retained as redacted evidence;
+fields whose names contain token, secret, password, access_key, or authorization
+are removed before persistence.
+
+The receiver uses the unguessable token in its URL instead of a separate
+signature protocol. Disable a configuration to reject new alerts without losing
+history; deleting it removes its credentials and receiver token while keeping
+existing task snapshots. The console shows live phase events and supports
+cancel and retry. Final results include an AI-assessed severity, its reasoning,
+and the estimated impact scope; these are kept separate from the source alert's
+severity and fall back to an explicit evidence-gap result when the available
+logs cannot support a reliable assessment.
+
+Duplicate throttling is consecutive and configurable. By default, only the
+first alert for the same method, endpoint, error code, and error message runs an
+analysis. Later matching alerts are stored as `suppressed` and receive a Feishu
+card saying **重复报错，已分析**, linked to the existing analysis task. The same
+fingerprint stays suppressed until a different error arrives; set a non-zero
+cooldown in the console if periodic re-analysis is desired. Replayed deliveries
+with the same `delivery_id` remain idempotent and do not create another task.
+
+Alert analysis uses a separate bounded Git cache instead of cloning the full
+repository for every task. It shallow-fetches only the configured branch or
+deployment SHA (default depth 200), keeps at most three recently used bare
+repositories and never caches worktrees. Each task gets a temporary worktree
+which is deleted on completion; a janitor removes crash leftovers after one
+hour. The cache is also bounded by 5 GiB, seven days of idleness, and a 1 GiB
+free-disk watermark. All limits are editable in the console under **告警 Git 缓存**
+and apply to later fetch/cleanup passes without restarting the service. Existing
+legacy full incident mirrors are replaced on first use. PR-review mirrors keep
+their existing behavior and are not counted in these alert-analysis limits.
+
+Feishu custom webhooks cannot reply to or update an existing alert message
+because they do not provide its message id. This implementation therefore sends
+independent progress cards. Threaded replies or in-place updates require a
+Feishu app bot and message credentials, which are intentionally outside this
+lightweight webhook mode.
+
 ## GitHub Pages
 
 `.github/workflows/pages.yml` publishes the static site in `docs/` to GitHub
@@ -249,6 +340,8 @@ Env vars (all optional except `ADMIN_PASSWORD`; the console can set the rest):
 | Var | Default | Notes |
 |-----|---------|-------|
 | `ADMIN_PASSWORD` | — | required; protects `/admin` |
+| `SECRET_KEY` | — | required before saving alert configurations; use a stable random secret to AES-GCM encrypt SLS/Feishu credentials in SQLite |
+| `PUBLIC_URL` | — | optional public service base URL used by Feishu cards to link back to the alert task in `/admin` |
 | `GITEA_URL` / `GITEA_TOKEN` | — | bot account |
 | `GITEA_TIMEOUT` | `90s` | per Gitea API request; also configurable in console |
 | `WEBHOOK_SECRET` | — | HMAC-SHA256 verification |
@@ -275,6 +368,13 @@ Env vars (all optional except `ADMIN_PASSWORD`; the console can set the rest):
 | `TRIGGER_KEYWORDS` | `/review,@review` | comma-separated |
 | `REPO_ALLOWLIST` | — | comma-separated `owner/repo`; empty = all |
 | `TIMEOUT` | `30m` | per codex run |
+| `ANALYSIS_GIT_FETCH_DEPTH` | `200` | commits fetched for the configured alert-analysis branch/SHA |
+| `ANALYSIS_CACHE_MAX_REPOSITORIES` | `3` | maximum recently used alert repository caches |
+| `ANALYSIS_CACHE_MAX_MB` | `5120` | total alert repository cache limit in MiB |
+| `ANALYSIS_CACHE_MAX_IDLE` | `168h` | evict an unused alert repository after this duration |
+| `ANALYSIS_WORKTREE_TTL` | `1h` | remove worktrees left behind by interrupted tasks |
+| `ANALYSIS_CACHE_CLEANUP_INTERVAL` | `10m` | background janitor interval |
+| `ANALYSIS_MIN_FREE_MB` | `1024` | reject/evict alert caches below this free-space watermark; `0` disables it |
 
 ## Security
 

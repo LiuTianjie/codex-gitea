@@ -54,6 +54,23 @@ type ChatProbeInput struct {
 
 type ChatProbeFunc func(context.Context, ChatProbeInput) (string, error)
 
+type AnalysisControl interface {
+	Cancel(context.Context, int64) (*model.AnalysisTask, error)
+	Retry(context.Context, int64) (*model.AnalysisTask, error)
+}
+
+type AnalysisTestFuncs struct {
+	SLS    func(context.Context, model.AnalysisConfig) error
+	Feishu func(context.Context, model.AnalysisConfig) error
+	Repo   func(context.Context, model.AnalysisConfig) error
+}
+
+type AnalysisDependencies struct {
+	Store   model.AnalysisStore
+	Control AnalysisControl
+	Tests   AnalysisTestFuncs
+}
+
 // Console serves the authenticated admin panel and its JSON API.
 type Console struct {
 	store           model.Store
@@ -65,6 +82,9 @@ type Console struct {
 	onSettingsApply SettingsApplyFunc
 	skillGenerator  SkillGeneratorFunc
 	chatProbe       ChatProbeFunc
+	analysisStore   model.AnalysisStore
+	analysisControl AnalysisControl
+	analysisTests   AnalysisTestFuncs
 	skillTasksMu    sync.Mutex
 	skillTasks      map[string]*skillGenerationTask
 }
@@ -90,6 +110,10 @@ func New(store model.Store, cfg *config.Config, codexHome string, statusArgs ...
 			c.skillGenerator = v
 		case ChatProbeFunc:
 			c.chatProbe = v
+		case AnalysisDependencies:
+			c.analysisStore = v.Store
+			c.analysisControl = v.Control
+			c.analysisTests = v.Tests
 		}
 	}
 	return c
@@ -138,6 +162,18 @@ func (c *Console) Routes() http.Handler {
 	mux.HandleFunc("GET /admin/api/jobs/{id}", c.handleJobDetail)
 	mux.HandleFunc("POST /admin/api/jobs/{id}/rerun", c.handleJobRerun)
 	mux.HandleFunc("POST /admin/api/jobs/{id}/cancel", c.handleJobCancel)
+	mux.HandleFunc("GET /admin/api/alert-analysis/configs", c.handleAnalysisConfigs)
+	mux.HandleFunc("POST /admin/api/alert-analysis/configs", c.handleCreateAnalysisConfig)
+	mux.HandleFunc("PUT /admin/api/alert-analysis/configs/{id}", c.handleUpdateAnalysisConfig)
+	mux.HandleFunc("DELETE /admin/api/alert-analysis/configs/{id}", c.handleDeleteAnalysisConfig)
+	mux.HandleFunc("POST /admin/api/alert-analysis/configs/{id}/enabled", c.handleSetAnalysisConfigEnabled)
+	mux.HandleFunc("POST /admin/api/alert-analysis/configs/{id}/rotate-token", c.handleRotateAnalysisConfigToken)
+	mux.HandleFunc("POST /admin/api/alert-analysis/configs/{id}/test/{kind}", c.handleTestAnalysisConfig)
+	mux.HandleFunc("GET /admin/api/alert-analysis/tasks", c.handleAnalysisTasks)
+	mux.HandleFunc("GET /admin/api/alert-analysis/tasks/{id}", c.handleAnalysisTaskDetail)
+	mux.HandleFunc("GET /admin/api/alert-analysis/tasks/{id}/events", c.handleAnalysisTaskEvents)
+	mux.HandleFunc("POST /admin/api/alert-analysis/tasks/{id}/cancel", c.handleAnalysisTaskCancel)
+	mux.HandleFunc("POST /admin/api/alert-analysis/tasks/{id}/retry", c.handleAnalysisTaskRetry)
 	mux.HandleFunc("POST /admin/api/analytics/reports", c.handleCreateAnalysisReport)
 	mux.HandleFunc("GET /admin/api/analytics/reports/latest", c.handleLatestAnalysisReport)
 	mux.HandleFunc("GET /admin/api/analytics/reports", c.handleListAnalysisReports)
@@ -335,40 +371,47 @@ func (c *Console) handleEffectiveConfig(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":                          true,
-		"gitea_url":                   cfg.GiteaURL,
-		"gitea_token_set":             strings.TrimSpace(cfg.GiteaToken) != "",
-		"webhook_secret_set":          strings.TrimSpace(cfg.WebhookSecret) != "",
-		"gitea_timeout":               cfg.GiteaTimeout.String(),
-		"model":                       cfg.Model,
-		"codex_reasoning_effort":      cfg.CodexReasoningEffort,
-		"codex_base_url":              cfg.CodexBaseURL,
-		"codex_auth_mode":             cfg.CodexAuthMode,
-		"codex_home_effective":        effectiveCodexHome(cfg),
-		"codex_ccswitch_home":         effectiveCCSwitchHome(cfg),
-		"codex_api_key_set":           strings.TrimSpace(cfg.CodexAPIKey) != "",
-		"codex_api_key_fingerprint":   secretFingerprint(cfg.CodexAPIKey),
-		"codex_cc_switch_provider_id": cfg.CodexCCSwitchProvider,
-		"codex_sandbox_mode":          cfg.CodexSandbox,
-		"claude_enabled":              cfg.ClaudeEnabled,
-		"claude_model":                cfg.ClaudeModel,
-		"claude_api_key_set":          strings.TrimSpace(cfg.ClaudeAPIKey) != "",
-		"claude_base_url":             cfg.ClaudeBaseURL,
-		"claude_home":                 cfg.ClaudeHome,
-		"cc_switch_config_dir":        cfg.CCSwitchConfigDir,
-		"cc_switch_provider_id":       cfg.CCSwitchProvider,
-		"claude_max_budget_usd":       cfg.ClaudeMaxBudgetUSD,
-		"minimax_enabled":             cfg.MiniMaxEnabled,
-		"minimax_model":               cfg.MiniMaxModel,
-		"minimax_provider_id":         cfg.MiniMaxProvider,
-		"minimax_api_key_set":         strings.TrimSpace(cfg.MiniMaxAPIKey) != "",
-		"minimax_base_url":            cfg.MiniMaxBaseURL,
-		"minimax_max_budget_usd":      cfg.MiniMaxMaxBudgetUSD,
-		"concurrency":                 cfg.Concurrency,
-		"trigger_keywords":            strings.Join(cfg.TriggerKeywords, ","),
-		"repo_allowlist":              strings.Join(cfg.RepoAllowlist, ","),
-		"config_source":               os.Getenv("CONFIG_SOURCE"),
-		"runtime_reload_note":         "保存设置会写入数据库；后续 review 会热生效 Gitea token/timeout、Webhook 密钥、触发关键词、仓库白名单和 reviewer 配置；监听地址和 worker 并发仍需重启服务。",
+		"ok":                              true,
+		"gitea_url":                       cfg.GiteaURL,
+		"gitea_token_set":                 strings.TrimSpace(cfg.GiteaToken) != "",
+		"webhook_secret_set":              strings.TrimSpace(cfg.WebhookSecret) != "",
+		"gitea_timeout":                   cfg.GiteaTimeout.String(),
+		"model":                           cfg.Model,
+		"codex_reasoning_effort":          cfg.CodexReasoningEffort,
+		"codex_base_url":                  cfg.CodexBaseURL,
+		"codex_auth_mode":                 cfg.CodexAuthMode,
+		"codex_home_effective":            effectiveCodexHome(cfg),
+		"codex_ccswitch_home":             effectiveCCSwitchHome(cfg),
+		"codex_api_key_set":               strings.TrimSpace(cfg.CodexAPIKey) != "",
+		"codex_api_key_fingerprint":       secretFingerprint(cfg.CodexAPIKey),
+		"codex_cc_switch_provider_id":     cfg.CodexCCSwitchProvider,
+		"codex_sandbox_mode":              cfg.CodexSandbox,
+		"claude_enabled":                  cfg.ClaudeEnabled,
+		"claude_model":                    cfg.ClaudeModel,
+		"claude_api_key_set":              strings.TrimSpace(cfg.ClaudeAPIKey) != "",
+		"claude_base_url":                 cfg.ClaudeBaseURL,
+		"claude_home":                     cfg.ClaudeHome,
+		"cc_switch_config_dir":            cfg.CCSwitchConfigDir,
+		"cc_switch_provider_id":           cfg.CCSwitchProvider,
+		"claude_max_budget_usd":           cfg.ClaudeMaxBudgetUSD,
+		"minimax_enabled":                 cfg.MiniMaxEnabled,
+		"minimax_model":                   cfg.MiniMaxModel,
+		"minimax_provider_id":             cfg.MiniMaxProvider,
+		"minimax_api_key_set":             strings.TrimSpace(cfg.MiniMaxAPIKey) != "",
+		"minimax_base_url":                cfg.MiniMaxBaseURL,
+		"minimax_max_budget_usd":          cfg.MiniMaxMaxBudgetUSD,
+		"concurrency":                     cfg.Concurrency,
+		"trigger_keywords":                strings.Join(cfg.TriggerKeywords, ","),
+		"repo_allowlist":                  strings.Join(cfg.RepoAllowlist, ","),
+		"analysis_git_fetch_depth":        cfg.AnalysisGitFetchDepth,
+		"analysis_cache_max_repositories": cfg.AnalysisCacheMaxRepositories,
+		"analysis_cache_max_mb":           cfg.AnalysisCacheMaxMB,
+		"analysis_cache_max_idle":         cfg.AnalysisCacheMaxIdle.String(),
+		"analysis_worktree_ttl":           cfg.AnalysisWorktreeTTL.String(),
+		"analysis_cache_cleanup_interval": cfg.AnalysisCacheCleanupInterval.String(),
+		"analysis_min_free_mb":            cfg.AnalysisMinFreeMB,
+		"config_source":                   os.Getenv("CONFIG_SOURCE"),
+		"runtime_reload_note":             "保存设置会写入数据库；后续 review 与告警分析会热生效 Gitea token/timeout、Webhook 密钥、触发关键词、仓库白名单、reviewer 和告警 Git 缓存策略；监听地址和 worker 并发仍需重启服务。",
 	})
 }
 
