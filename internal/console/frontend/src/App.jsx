@@ -858,7 +858,7 @@ function AnalysisConfigsPanel() {
           <ConfigSection title="阿里云 SLS">
             <AnalysisField label="Endpoint" value={form.sls_endpoint} onChange={(v) => setField('sls_endpoint', v)} />
             <AnalysisField label="Project" value={form.sls_project} onChange={(v) => setField('sls_project', v)} />
-            <AnalysisField label="原始 Logstore" value={form.sls_logstore} onChange={(v) => setField('sls_logstore', v)} />
+            <AnalysisField label="查询 Logstore（多个用逗号分隔）" value={form.sls_logstore} placeholder="function-log-prod-flat,taskiq-log-prod-flat" onChange={(v) => setField('sls_logstore', v)} />
             <AnalysisField label="AccessKey ID" value={form.sls_access_key_id} secret onChange={(v) => setField('sls_access_key_id', v)} />
             <AnalysisField label="AccessKey Secret" value={form.sls_access_key_secret} secret onChange={(v) => setField('sls_access_key_secret', v)} />
             <AnalysisField label="查询窗口（秒）" value={form.log_window_seconds} type="number" onChange={(v) => setField('log_window_seconds', Number(v))} />
@@ -887,8 +887,8 @@ function ConfigSection({ title, children }) {
   return <section className="analysis-config-section"><h4>{title}</h4><div className="form-grid">{children}</div></section>
 }
 
-function AnalysisField({ label, value, onChange, secret = false, type = 'text' }) {
-  return <label className="field"><span>{label}</span><input type={secret && value !== REDACTED ? 'password' : type} value={value ?? ''} onChange={(event) => onChange(event.target.value)} /></label>
+function AnalysisField({ label, value, onChange, secret = false, type = 'text', placeholder = '' }) {
+  return <label className="field"><span>{label}</span><input type={secret && value !== REDACTED ? 'password' : type} value={value ?? ''} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} /></label>
 }
 
 function SkillsPanel() {

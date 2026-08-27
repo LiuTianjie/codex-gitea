@@ -28,6 +28,7 @@ func (AliyunSLSFetcher) Fetch(ctx context.Context, cfg model.AnalysisConfig, ale
 		window = 3 * time.Minute
 	}
 	query := buildSLSQuery(alert)
+	logstores := parseSLSLogstores(cfg.SLSLogstore)
 	client := sls.CreateNormalInterface(cfg.SLSEndpoint, cfg.SLSAccessKeyID, cfg.SLSAccessKeySecret, "")
 	if concrete, ok := client.(*sls.Client); ok {
 		concrete.SetHTTPClient(&http.Client{Timeout: 30 * time.Second})
@@ -39,25 +40,37 @@ func (AliyunSLSFetcher) Fetch(ctx context.Context, cfg model.AnalysisConfig, ale
 	}
 	ch := make(chan response, 1)
 	go func() {
-		result, err := client.GetLogs(cfg.SLSProject, cfg.SLSLogstore, "", center.Add(-window).Unix(), center.Add(window).Unix()+1, query, 100, 0, false)
-		if err != nil {
-			ch <- response{err: err}
-			return
+		var logs []map[string]string
+		for _, logstore := range logstores {
+			result, err := client.GetLogs(cfg.SLSProject, logstore, "", center.Add(-window).Unix(), center.Add(window).Unix()+1, query, 100, 0, false)
+			if err != nil {
+				ch <- response{err: fmt.Errorf("query SLS %s/%s: %w", cfg.SLSProject, logstore, err)}
+				return
+			}
+			for _, entry := range result.Logs {
+				withSource := make(map[string]string, len(entry)+1)
+				for key, value := range entry {
+					withSource[key] = value
+				}
+				withSource["__logstore"] = logstore
+				logs = append(logs, withSource)
+			}
 		}
-		ch <- response{logs: result.Logs}
+		ch <- response{logs: logs}
 	}()
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case result := <-ch:
 		if result.err != nil {
-			return nil, fmt.Errorf("query SLS %s/%s: %w", cfg.SLSProject, cfg.SLSLogstore, result.err)
+			return nil, result.err
 		}
 		return formatSLSLogs(result.logs), nil
 	}
 }
 
 func (AliyunSLSFetcher) Test(ctx context.Context, cfg model.AnalysisConfig) error {
+	logstores := parseSLSLogstores(cfg.SLSLogstore)
 	client := sls.CreateNormalInterface(cfg.SLSEndpoint, cfg.SLSAccessKeyID, cfg.SLSAccessKeySecret, "")
 	if concrete, ok := client.(*sls.Client); ok {
 		concrete.SetHTTPClient(&http.Client{Timeout: 15 * time.Second})
@@ -69,8 +82,18 @@ func (AliyunSLSFetcher) Test(ctx context.Context, cfg model.AnalysisConfig) erro
 	}
 	ch := make(chan response, 1)
 	go func() {
-		ok, err := client.CheckLogstoreExist(cfg.SLSProject, cfg.SLSLogstore)
-		ch <- response{ok: ok, err: err}
+		for _, logstore := range logstores {
+			ok, err := client.CheckLogstoreExist(cfg.SLSProject, logstore)
+			if err != nil {
+				ch <- response{err: fmt.Errorf("check SLS Logstore %s/%s: %w", cfg.SLSProject, logstore, err)}
+				return
+			}
+			if !ok {
+				ch <- response{err: fmt.Errorf("SLS Logstore %s/%s does not exist", cfg.SLSProject, logstore)}
+				return
+			}
+		}
+		ch <- response{ok: true}
 	}()
 	select {
 	case <-ctx.Done():
@@ -79,11 +102,33 @@ func (AliyunSLSFetcher) Test(ctx context.Context, cfg model.AnalysisConfig) erro
 		if result.err != nil {
 			return result.err
 		}
-		if !result.ok {
-			return fmt.Errorf("SLS Logstore %s/%s does not exist", cfg.SLSProject, cfg.SLSLogstore)
-		}
 		return nil
 	}
+}
+
+func parseSLSLogstores(value string) []string {
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		switch r {
+		case ',', '，', ';', '；', '\n', '\r':
+			return true
+		default:
+			return false
+		}
+	})
+	seen := make(map[string]struct{}, len(parts))
+	logstores := make([]string, 0, len(parts))
+	for _, part := range parts {
+		name := strings.TrimSpace(part)
+		if name == "" {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		logstores = append(logstores, name)
+	}
+	return logstores
 }
 
 func parseAlertTime(value string) time.Time {

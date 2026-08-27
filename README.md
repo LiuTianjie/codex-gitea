@@ -248,7 +248,8 @@ Usage instruction format:
 ### Alert analysis
 
 The **Alert configs** tab creates independent, database-backed configurations.
-Each configuration includes a repository URL/ref, SLS endpoint/project/logstore
+Each configuration includes a repository URL/ref, SLS endpoint/project and one
+or more comma-separated logstores
 and credentials, a Feishu webhook, optional model/prompt overrides, and a
 duplicate-alert throttle. Repository checkout reuses the global `GITEA_TOKEN`;
 there is no second Gitea token in an alert configuration.
