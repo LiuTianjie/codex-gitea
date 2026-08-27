@@ -123,7 +123,7 @@ func (p *Processor) phase(ctx context.Context, cfg model.AnalysisConfig, task *m
 	_ = p.Store.SetAnalysisTaskPhase(ctx, task.ID, phase)
 	_ = p.Store.AppendAnalysisTaskEvent(ctx, task.ID, phase, "info", message, data)
 	task.Phase = phase
-	if p.Notifier == nil || strings.TrimSpace(cfg.FeishuWebhook) == "" {
+	if p.Notifier == nil || !shouldNotifyPhase(cfg, phase) {
 		return
 	}
 	var result *model.AnalysisResult
@@ -133,28 +133,56 @@ func (p *Processor) phase(ctx context.Context, cfg model.AnalysisConfig, task *m
 			result = &parsed
 		}
 	}
-	if err := p.Notifier.SendPhase(ctx, cfg, *task, phase, result); err != nil {
-		_ = p.Store.SetAnalysisNotification(context.Background(), task.ID, "failed", err.Error())
+	messageID, err := p.Notifier.SendPhase(ctx, cfg, *task, phase, result)
+	if err != nil {
+		_ = p.Store.SetAnalysisNotification(context.Background(), task.ID, "failed", err.Error(), "")
 		_ = p.Store.AppendAnalysisTaskEvent(context.Background(), task.ID, "notification", "warning", "飞书通知失败："+err.Error(), nil)
 		return
 	}
-	_ = p.Store.SetAnalysisNotification(context.Background(), task.ID, "sent", "")
+	if messageID != "" {
+		task.FeishuMessageID = messageID
+	}
+	_ = p.Store.SetAnalysisNotification(context.Background(), task.ID, "sent", "", messageID)
 }
 
 func (p *Processor) NotifyTerminal(ctx context.Context, task *model.AnalysisTask, phase string) {
 	if task == nil || task.ConfigID == nil || p.Notifier == nil {
 		return
 	}
+	if phase == "suppressed" || phase == "throttled" {
+		return
+	}
 	cfg, err := p.Store.GetAnalysisConfig(ctx, *task.ConfigID)
-	if err != nil || strings.TrimSpace(cfg.FeishuWebhook) == "" {
+	if err != nil || !hasFeishuDestination(*cfg) {
 		return
 	}
 	task.Phase = phase
-	if err := p.Notifier.SendPhase(ctx, *cfg, *task, phase, nil); err != nil {
-		_ = p.Store.SetAnalysisNotification(context.Background(), task.ID, "failed", err.Error())
+	messageID, err := p.Notifier.SendPhase(ctx, *cfg, *task, phase, nil)
+	if err != nil {
+		_ = p.Store.SetAnalysisNotification(context.Background(), task.ID, "failed", err.Error(), "")
 		return
 	}
-	_ = p.Store.SetAnalysisNotification(context.Background(), task.ID, "sent", "")
+	if messageID != "" {
+		task.FeishuMessageID = messageID
+	}
+	_ = p.Store.SetAnalysisNotification(context.Background(), task.ID, "sent", "", messageID)
+}
+
+func shouldNotifyPhase(cfg model.AnalysisConfig, phase string) bool {
+	if !hasFeishuDestination(cfg) || phase == "suppressed" || phase == "throttled" {
+		return false
+	}
+	if cfg.FeishuMode == "app" {
+		return true
+	}
+	return phase == "succeeded" || phase == "failed" || phase == "canceled"
+}
+
+func hasFeishuDestination(cfg model.AnalysisConfig) bool {
+	if cfg.FeishuMode == "app" {
+		return strings.TrimSpace(cfg.FeishuAppID) != "" && strings.TrimSpace(cfg.FeishuAppSecret) != "" && strings.TrimSpace(cfg.FeishuChatID) != ""
+	}
+	return strings.TrimSpace(cfg.FeishuWebhook) != ""
 }
 
 func collectGitFacts(ctx context.Context, worktree string) (string, error) {

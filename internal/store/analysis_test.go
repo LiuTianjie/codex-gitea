@@ -63,6 +63,38 @@ func TestAnalysisConfigSecretsAreEncryptedAndRedeliveriesAreIdempotent(t *testin
 	if err != nil || created || again.ID != task.ID {
 		t.Fatalf("redelivery = %+v created=%v err=%v", again, created, err)
 	}
+	if err := s.SetAnalysisNotification(ctx, task.ID, "sent", "", "om_message"); err != nil {
+		t.Fatal(err)
+	}
+	storedTask, err := s.GetAnalysisTask(ctx, task.ID)
+	if err != nil || storedTask.FeishuMessageID != "om_message" {
+		t.Fatalf("stored message id task=%+v err=%v", storedTask, err)
+	}
+}
+
+func TestAnalysisConfigEncryptsFeishuAppSecret(t *testing.T) {
+	ctx := context.Background()
+	s := openAnalysisTestStore(t)
+	cfg := analysisTestConfig("app-token")
+	cfg.FeishuMode = "app"
+	cfg.FeishuWebhook = ""
+	cfg.FeishuAppID = "cli_test"
+	cfg.FeishuAppSecret = "app-secret"
+	cfg.FeishuChatID = "oc_test"
+	created, err := s.CreateAnalysisConfig(ctx, &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var encrypted string
+	if err := s.db.QueryRow(`SELECT feishu_app_secret FROM alert_analysis_configs WHERE id=?`, created.ID).Scan(&encrypted); err != nil {
+		t.Fatal(err)
+	}
+	if encrypted == "app-secret" || encrypted == "" {
+		t.Fatalf("Feishu app secret was not encrypted: %q", encrypted)
+	}
+	if created.FeishuAppSecret != "app-secret" || created.FeishuMode != "app" || created.FeishuChatID != "oc_test" {
+		t.Fatalf("created config=%+v", created)
+	}
 }
 
 func TestAnalysisThrottleAnalyzesOnceThenSuppressesDuplicates(t *testing.T) {

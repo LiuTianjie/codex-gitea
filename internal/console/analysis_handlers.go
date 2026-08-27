@@ -26,7 +26,11 @@ type analysisConfigPayload struct {
 	SLSLogstore          string `json:"sls_logstore"`
 	SLSAccessKeyID       string `json:"sls_access_key_id"`
 	SLSAccessKeySecret   string `json:"sls_access_key_secret"`
+	FeishuMode           string `json:"feishu_mode"`
 	FeishuWebhook        string `json:"feishu_webhook"`
+	FeishuAppID          string `json:"feishu_app_id"`
+	FeishuAppSecret      string `json:"feishu_app_secret"`
+	FeishuChatID         string `json:"feishu_chat_id"`
 	Model                string `json:"model"`
 	ReasoningEffort      string `json:"reasoning_effort"`
 	TimeoutSeconds       int    `json:"timeout_seconds"`
@@ -44,7 +48,9 @@ func (p analysisConfigPayload) model() model.AnalysisConfig {
 		RepositoryRef: p.RepositoryRef, SLSEndpoint: p.SLSEndpoint,
 		SLSProject: p.SLSProject, SLSLogstore: p.SLSLogstore,
 		SLSAccessKeyID: p.SLSAccessKeyID, SLSAccessKeySecret: p.SLSAccessKeySecret,
-		FeishuWebhook: p.FeishuWebhook, Model: p.Model, ReasoningEffort: p.ReasoningEffort,
+		FeishuMode: p.FeishuMode, FeishuWebhook: p.FeishuWebhook,
+		FeishuAppID: p.FeishuAppID, FeishuAppSecret: p.FeishuAppSecret, FeishuChatID: p.FeishuChatID,
+		Model: p.Model, ReasoningEffort: p.ReasoningEffort,
 		TimeoutSeconds: p.TimeoutSeconds, LogWindowSeconds: p.LogWindowSeconds,
 		Prompt: p.Prompt, ThrottleEnabled: p.ThrottleEnabled,
 		ThrottleThreshold: p.ThrottleThreshold, ThrottleCooldownSecs: p.ThrottleCooldownSecs,
@@ -126,6 +132,9 @@ func (c *Console) handleUpdateAnalysisConfig(w http.ResponseWriter, r *http.Requ
 	}
 	if payload.FeishuWebhook == redacted {
 		updated.FeishuWebhook = existing.FeishuWebhook
+	}
+	if payload.FeishuAppSecret == "" || payload.FeishuAppSecret == redacted {
+		updated.FeishuAppSecret = existing.FeishuAppSecret
 	}
 	result, err := c.analysisStore.UpdateAnalysisConfig(r.Context(), &updated)
 	if err != nil {
@@ -352,7 +361,9 @@ func analysisConfigView(cfg model.AnalysisConfig) map[string]any {
 		"repository_url": cfg.RepositoryURL, "repository_ref": cfg.RepositoryRef,
 		"sls_endpoint": cfg.SLSEndpoint, "sls_project": cfg.SLSProject, "sls_logstore": cfg.SLSLogstore,
 		"sls_access_key_id": secret(cfg.SLSAccessKeyID), "sls_access_key_secret": secret(cfg.SLSAccessKeySecret),
-		"feishu_webhook": secret(cfg.FeishuWebhook), "model": cfg.Model, "reasoning_effort": cfg.ReasoningEffort,
+		"feishu_mode": cfg.FeishuMode, "feishu_webhook": secret(cfg.FeishuWebhook),
+		"feishu_app_id": cfg.FeishuAppID, "feishu_app_secret": secret(cfg.FeishuAppSecret), "feishu_chat_id": cfg.FeishuChatID,
+		"model": cfg.Model, "reasoning_effort": cfg.ReasoningEffort,
 		"timeout_seconds": cfg.TimeoutSeconds, "log_window_seconds": cfg.LogWindowSeconds, "prompt": cfg.Prompt,
 		"throttle_enabled": cfg.ThrottleEnabled, "throttle_threshold": cfg.ThrottleThreshold,
 		"throttle_cooldown_seconds": cfg.ThrottleCooldownSecs, "throttle_fields": cfg.ThrottleFields,
@@ -369,7 +380,8 @@ func analysisTaskView(task model.AnalysisTask, includePayload bool) map[string]a
 		"attempts": task.Attempts, "cancel_requested": task.CancelRequested,
 		"error_type": task.ErrorType, "error": task.Error,
 		"notification_status": task.NotificationStatus, "notification_error": task.NotificationError,
-		"created_at": task.CreatedAt.Format(time.RFC3339), "started_at": formatOptionalTime(task.StartedAt),
+		"feishu_message_id": task.FeishuMessageID,
+		"created_at":        task.CreatedAt.Format(time.RFC3339), "started_at": formatOptionalTime(task.StartedAt),
 		"finished_at": formatOptionalTime(task.FinishedAt),
 		"alert":       map[string]any{"alert_id": task.Alert.AlertID, "title": task.Alert.Title, "environment": task.Alert.Environment, "service": task.Alert.Service, "method": task.Alert.Method, "endpoint": task.Alert.Endpoint, "trace_id": task.Alert.TraceID, "error_code": task.Alert.ErrorCode},
 	}

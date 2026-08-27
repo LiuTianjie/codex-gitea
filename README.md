@@ -55,7 +55,8 @@ same reviewer session instead of starting from an empty context every time.
   analytics, and project rule exports.
 - **Configurable alert analysis** — receives the structured alerts already sent
   to Feishu, queries the matching Aliyun SLS raw logs, inspects a configured
-  repository and Git history, and reports progress/results as Feishu cards.
+  repository and Git history, and reports results through a Feishu webhook or
+  live-updates one card through a Feishu app bot.
 - **Project rules** — each repository can expose a downloadable `SKILL.md` at
   `/skills/<owner>/<repo>/SKILL.md`.
 - **Readiness endpoint** — `/healthz` is a liveness check; `/readyz` reports DB,
@@ -82,7 +83,8 @@ existing alert action
   -> query SLS around the alert time
   -> prepare a read-only repository revision using the global Gitea token
   -> locate endpoints/tasks, code evidence, commits, and suggested contacts
-  -> send phase cards to the configured Feishu webhook
+  -> app bot: send once and update the same card for every phase
+  -> custom webhook: send one card only when the task reaches a terminal state
 ```
 
 ## Reviewer backends
@@ -249,10 +251,11 @@ Usage instruction format:
 
 The **Alert configs** tab creates independent, database-backed configurations.
 Each configuration includes a repository URL/ref, SLS endpoint/project and one
-or more comma-separated logstores
-and credentials, a Feishu webhook, optional model/prompt overrides, and a
-duplicate-alert throttle. Repository checkout reuses the global `GITEA_TOKEN`;
-there is no second Gitea token in an alert configuration.
+or more comma-separated logstores and credentials, one of two Feishu delivery
+modes, optional model/prompt overrides, and a duplicate-alert throttle. App-bot
+mode stores an App ID, encrypted App Secret, and target Chat ID; webhook mode
+stores an encrypted custom-bot webhook. Repository checkout reuses the global
+`GITEA_TOKEN`; there is no second Gitea token in an alert configuration.
 
 Creating or rotating a configuration returns its full receiver URL once. Add a
 second HTTP action after the existing Feishu alert action and POST structured
@@ -299,8 +302,8 @@ logs cannot support a reliable assessment.
 
 Duplicate throttling is consecutive and configurable. By default, only the
 first alert for the same method, endpoint, error code, and error message runs an
-analysis. Later matching alerts are stored as `suppressed` and receive a Feishu
-card saying **重复报错，已分析**, linked to the existing analysis task. The same
+analysis. Later matching alerts are stored as `suppressed` and remain visible
+only in the console; they never send another group message. The same
 fingerprint stays suppressed until a different error arrives; set a non-zero
 cooldown in the console if periodic re-analysis is desired. Replayed deliveries
 with the same `delivery_id` remain idempotent and do not create another task.
@@ -316,11 +319,13 @@ and apply to later fetch/cleanup passes without restarting the service. Existing
 legacy full incident mirrors are replaced on first use. PR-review mirrors keep
 their existing behavior and are not counted in these alert-analysis limits.
 
-Feishu custom webhooks cannot reply to or update an existing alert message
-because they do not provide its message id. This implementation therefore sends
-independent progress cards. Threaded replies or in-place updates require a
-Feishu app bot and message credentials, which are intentionally outside this
-lightweight webhook mode.
+Feishu custom webhooks do not return a message id, so webhook mode sends only
+one terminal card and never posts progress cards. Feishu app-bot mode obtains a
+tenant access token, sends the initial shared card through the IM API, persists
+the returned `message_id`, and patches that same card for later phases. The app
+must have bot capability, be a member of the target chat, and hold one of the
+documented send/update message permissions. Duplicate alerts remain silent in
+both delivery modes.
 
 ## GitHub Pages
 

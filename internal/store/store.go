@@ -157,6 +157,11 @@ func migrateSchema(db *sql.DB) error {
 		{table: "jobs", name: "next_attempt_at", def: "TEXT"},
 		{table: "review_runs", name: "error_type", def: "TEXT"},
 		{table: "analysis_tasks", name: "duplicate_of_task_id", def: "INTEGER REFERENCES analysis_tasks(id) ON DELETE SET NULL"},
+		{table: "alert_analysis_configs", name: "feishu_mode", def: "TEXT NOT NULL DEFAULT 'webhook'"},
+		{table: "alert_analysis_configs", name: "feishu_app_id", def: "TEXT NOT NULL DEFAULT ''"},
+		{table: "alert_analysis_configs", name: "feishu_app_secret", def: "TEXT NOT NULL DEFAULT ''"},
+		{table: "alert_analysis_configs", name: "feishu_chat_id", def: "TEXT NOT NULL DEFAULT ''"},
+		{table: "analysis_tasks", name: "feishu_message_id", def: "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := ensureColumn(db, col.table, col.name, col.def); err != nil {
 			return err

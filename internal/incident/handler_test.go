@@ -39,13 +39,7 @@ func createIncidentTestStore(t *testing.T) (*store.Store, model.AnalysisConfig, 
 
 func TestHandlerSuppressesSameEndpointAndErrorAfterFirstAnalysis(t *testing.T) {
 	s, cfg, token := createIncidentTestStore(t)
-	var suppressed *model.AnalysisTask
-	h := &Handler{
-		Store: s,
-		NotifySuppressed: func(task *model.AnalysisTask) {
-			suppressed = task
-		},
-	}
+	h := &Handler{Store: s}
 	request := func(delivery, trace string) *httptest.ResponseRecorder {
 		body := []byte(`{"delivery_id":"` + delivery + `","method":"POST","endpoint":"/api/test","trace_id":"` + trace + `","error_code":"40310","error_message":"会员能力不可用"}`)
 		r := httptest.NewRequest(http.MethodPost, "/hooks/alert-analysis/"+itoa(cfg.ID)+"/"+token, bytes.NewReader(body))
@@ -59,7 +53,12 @@ func TestHandlerSuppressesSameEndpointAndErrorAfterFirstAnalysis(t *testing.T) {
 	if second := request("delivery-2", "trace-2"); second.Code != http.StatusAccepted {
 		t.Fatalf("second status=%d body=%s", second.Code, second.Body.String())
 	}
-	if suppressed == nil || suppressed.Status != model.AnalysisTaskSuppressed || suppressed.DuplicateOfTaskID == nil {
+	tasks, err := s.ListAnalysisTasks(context.Background(), model.AnalysisTaskFilter{Limit: 10})
+	if err != nil || len(tasks) != 2 {
+		t.Fatalf("tasks=%d err=%v", len(tasks), err)
+	}
+	suppressed := tasks[0]
+	if suppressed.Status != model.AnalysisTaskSuppressed || suppressed.DuplicateOfTaskID == nil {
 		t.Fatalf("suppressed task = %+v", suppressed)
 	}
 	if *suppressed.DuplicateOfTaskID == suppressed.ID {

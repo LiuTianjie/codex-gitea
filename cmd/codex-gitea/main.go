@@ -124,7 +124,7 @@ func main() {
 
 	q := queue.New(st, orch, cfg.Concurrency, logger)
 	incidentLogs := incident.AliyunSLSFetcher{}
-	incidentNotifier := incident.FeishuWebhookNotifier{ConsoleBaseURL: os.Getenv("PUBLIC_URL")}
+	incidentNotifier := &incident.FeishuNotifier{ConsoleBaseURL: os.Getenv("PUBLIC_URL")}
 	incidentProcessor := &incident.Processor{
 		Store: st,
 		Logs:  incidentLogs,
@@ -156,7 +156,7 @@ func main() {
 		Notifier: incidentNotifier,
 	}
 	incidentQ := incident.NewQueue(st, incidentProcessor, 2, logger)
-	incidentHandler := &incident.Handler{Store: st, Wake: incidentQ.Notify, NotifySuppressed: incidentQ.NotifySuppressed}
+	incidentHandler := &incident.Handler{Store: st, Wake: incidentQ.Notify}
 
 	// Webhook -> enqueue (fast, then 200).
 	onEvent := func(ctx context.Context, ev *model.WebhookEvent) error {

@@ -19,9 +19,8 @@ type WakeFunc func()
 // Handler receives config-specific alert webhooks and performs only the fast,
 // durable handoff. Analysis always happens asynchronously.
 type Handler struct {
-	Store            model.AnalysisStore
-	Wake             WakeFunc
-	NotifySuppressed func(*model.AnalysisTask)
+	Store model.AnalysisStore
+	Wake  WakeFunc
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -77,9 +76,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if created && task.Status == model.AnalysisTaskQueued && h.Wake != nil {
 		h.Wake()
-	}
-	if created && task.Status == model.AnalysisTaskSuppressed && h.NotifySuppressed != nil {
-		h.NotifySuppressed(task)
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"ok": true, "created": created, "task_id": task.ID,

@@ -41,7 +41,11 @@ type AnalysisConfig struct {
 	SLSLogstore          string
 	SLSAccessKeyID       string
 	SLSAccessKeySecret   string
+	FeishuMode           string
 	FeishuWebhook        string
+	FeishuAppID          string
+	FeishuAppSecret      string
+	FeishuChatID         string
 	Model                string
 	ReasoningEffort      string
 	TimeoutSeconds       int
@@ -141,6 +145,7 @@ type AnalysisTask struct {
 	ResultJSON         string
 	NotificationStatus string
 	NotificationError  string
+	FeishuMessageID    string
 	CreatedAt          time.Time
 	StartedAt          *time.Time
 	FinishedAt         *time.Time
@@ -218,7 +223,7 @@ type AnalysisStore interface {
 	ListAnalysisTaskEvents(context.Context, int64, int64) ([]AnalysisTaskEvent, error)
 	FinishAnalysisTask(context.Context, int64, AnalysisTaskStatus, string, string, string) error
 	SetAnalysisTaskPhase(context.Context, int64, string) error
-	SetAnalysisNotification(context.Context, int64, string, string) error
+	SetAnalysisNotification(context.Context, int64, string, string, string) error
 	RequestAnalysisTaskCancel(context.Context, int64) (*AnalysisTask, error)
 	RetryAnalysisTask(context.Context, int64, AnalysisConfigSnapshot) (*AnalysisTask, error)
 	RecoverAnalysisTasks(context.Context) error

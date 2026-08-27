@@ -12,12 +12,11 @@ import (
 )
 
 type Queue struct {
-	store      model.AnalysisStore
-	processor  TaskProcessor
-	workers    int
-	logger     *log.Logger
-	wake       chan struct{}
-	suppressed chan *model.AnalysisTask
+	store     model.AnalysisStore
+	processor TaskProcessor
+	workers   int
+	logger    *log.Logger
+	wake      chan struct{}
 
 	mu      sync.Mutex
 	cancels map[int64]context.CancelFunc
@@ -27,26 +26,13 @@ func NewQueue(store model.AnalysisStore, processor TaskProcessor, workers int, l
 	if workers < 1 {
 		workers = 1
 	}
-	return &Queue{store: store, processor: processor, workers: workers, logger: logger, wake: make(chan struct{}, 1), suppressed: make(chan *model.AnalysisTask, 1024), cancels: map[int64]context.CancelFunc{}}
+	return &Queue{store: store, processor: processor, workers: workers, logger: logger, wake: make(chan struct{}, 1), cancels: map[int64]context.CancelFunc{}}
 }
 
 func (q *Queue) Notify() {
 	select {
 	case q.wake <- struct{}{}:
 	default:
-	}
-}
-
-// NotifySuppressed schedules a lightweight Feishu duplicate card without
-// occupying an analysis worker. The task itself is already durably recorded.
-func (q *Queue) NotifySuppressed(task *model.AnalysisTask) {
-	if task == nil {
-		return
-	}
-	select {
-	case q.suppressed <- task:
-	default:
-		q.logf("suppressed analysis notification queue full; task=%d", task.ID)
 	}
 }
 
@@ -62,24 +48,8 @@ func (q *Queue) Run(ctx context.Context) error {
 			q.worker(ctx)
 		}()
 	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		q.suppressedWorker(ctx)
-	}()
 	wg.Wait()
 	return ctx.Err()
-}
-
-func (q *Queue) suppressedWorker(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case task := <-q.suppressed:
-			q.processor.NotifyTerminal(ctx, task, "suppressed")
-		}
-	}
 }
 
 func (q *Queue) worker(ctx context.Context) {

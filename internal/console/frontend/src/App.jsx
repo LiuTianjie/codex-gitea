@@ -569,7 +569,8 @@ function JobLogsDrawer({ open, job, loading, onClose, onRerun, onCancel }) {
 const EMPTY_ANALYSIS_CONFIG = {
   name: '', enabled: true, repository_url: '', repository_ref: 'main',
   sls_endpoint: '', sls_project: '', sls_logstore: '',
-  sls_access_key_id: '', sls_access_key_secret: '', feishu_webhook: '',
+  sls_access_key_id: '', sls_access_key_secret: '',
+  feishu_mode: 'webhook', feishu_webhook: '', feishu_app_id: '', feishu_app_secret: '', feishu_chat_id: '',
   model: '', reasoning_effort: 'high', timeout_seconds: 1800,
   log_window_seconds: 180, prompt: '', throttle_enabled: true,
   throttle_threshold: 1, throttle_cooldown_seconds: 0,
@@ -863,8 +864,15 @@ function AnalysisConfigsPanel() {
             <AnalysisField label="AccessKey Secret" value={form.sls_access_key_secret} secret onChange={(v) => setField('sls_access_key_secret', v)} />
             <AnalysisField label="查询窗口（秒）" value={form.log_window_seconds} type="number" onChange={(v) => setField('log_window_seconds', Number(v))} />
           </ConfigSection>
-          <ConfigSection title="飞书与分析">
-            <AnalysisField label="飞书 Webhook" value={form.feishu_webhook} secret onChange={(v) => setField('feishu_webhook', v)} />
+          <ConfigSection title="飞书通知">
+            <label className="field"><span>机器人类型</span><select value={form.feishu_mode || 'webhook'} onChange={(event) => setField('feishu_mode', event.target.value)}><option value="webhook">群 Webhook（完成后只发一张）</option><option value="app">应用机器人（实时更新同一张）</option></select></label>
+            {form.feishu_mode === 'app' ? <>
+              <AnalysisField label="应用机器人 App ID" value={form.feishu_app_id} placeholder="cli_xxx" onChange={(v) => setField('feishu_app_id', v)} />
+              <AnalysisField label="应用机器人 App Secret" value={form.feishu_app_secret} secret onChange={(v) => setField('feishu_app_secret', v)} />
+              <AnalysisField label="目标群 Chat ID" value={form.feishu_chat_id} placeholder="oc_xxx" onChange={(v) => setField('feishu_chat_id', v)} />
+            </> : <AnalysisField label="群机器人 Webhook" value={form.feishu_webhook} secret onChange={(v) => setField('feishu_webhook', v)} />}
+          </ConfigSection>
+          <ConfigSection title="分析模型">
             <AnalysisField label="模型（留空复用全局）" value={form.model} onChange={(v) => setField('model', v)} />
             <AnalysisField label="思考强度" value={form.reasoning_effort} onChange={(v) => setField('reasoning_effort', v)} />
             <AnalysisField label="超时（秒）" value={form.timeout_seconds} type="number" onChange={(v) => setField('timeout_seconds', Number(v))} />

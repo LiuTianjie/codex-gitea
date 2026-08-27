@@ -25,8 +25,19 @@ func normalizeAnalysisConfig(c *model.AnalysisConfig) {
 	c.SLSEndpoint = strings.TrimSpace(c.SLSEndpoint)
 	c.SLSProject = strings.TrimSpace(c.SLSProject)
 	c.SLSLogstore = strings.TrimSpace(c.SLSLogstore)
+	c.FeishuMode = strings.ToLower(strings.TrimSpace(c.FeishuMode))
+	c.FeishuWebhook = strings.TrimSpace(c.FeishuWebhook)
+	c.FeishuAppID = strings.TrimSpace(c.FeishuAppID)
+	c.FeishuChatID = strings.TrimSpace(c.FeishuChatID)
 	c.Model = strings.TrimSpace(c.Model)
 	c.ReasoningEffort = strings.TrimSpace(c.ReasoningEffort)
+	if c.FeishuMode == "" {
+		if c.FeishuAppID != "" || strings.TrimSpace(c.FeishuAppSecret) != "" || c.FeishuChatID != "" {
+			c.FeishuMode = "app"
+		} else {
+			c.FeishuMode = "webhook"
+		}
+	}
 	if c.RepositoryRef == "" {
 		c.RepositoryRef = "main"
 	}
@@ -59,6 +70,15 @@ func validateAnalysisConfig(c model.AnalysisConfig) error {
 	}
 	if strings.TrimSpace(c.SLSAccessKeyID) == "" || strings.TrimSpace(c.SLSAccessKeySecret) == "" {
 		return errors.New("SLS access key id and secret are required")
+	}
+	switch c.FeishuMode {
+	case "webhook":
+	case "app":
+		if c.FeishuAppID == "" || strings.TrimSpace(c.FeishuAppSecret) == "" || c.FeishuChatID == "" {
+			return errors.New("Feishu app id, app secret and chat id are required in app mode")
+		}
+	default:
+		return errors.New("Feishu mode must be webhook or app")
 	}
 	return nil
 }
@@ -108,15 +128,21 @@ func (s *Store) CreateAnalysisConfig(ctx context.Context, c *model.AnalysisConfi
 	if err != nil {
 		return nil, err
 	}
+	feishuAppSecret, err := s.encryptCredential(c.FeishuAppSecret)
+	if err != nil {
+		return nil, err
+	}
 	now := nowRFC3339()
 	res, err := s.db.ExecContext(ctx, `INSERT INTO alert_analysis_configs(
 		name,enabled,version,repository_url,repository_ref,sls_endpoint,sls_project,sls_logstore,
-		sls_access_key_id,sls_access_key_secret,feishu_webhook,model,reasoning_effort,timeout_seconds,
+		sls_access_key_id,sls_access_key_secret,feishu_mode,feishu_webhook,feishu_app_id,feishu_app_secret,feishu_chat_id,
+		model,reasoning_effort,timeout_seconds,
 		log_window_seconds,prompt,throttle_enabled,throttle_threshold,throttle_cooldown_seconds,
 		throttle_fields,ingest_token_hash,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		c.Name, boolInt(c.Enabled), 1, c.RepositoryURL, c.RepositoryRef, c.SLSEndpoint,
-		c.SLSProject, c.SLSLogstore, akID, akSecret, feishu, c.Model, c.ReasoningEffort,
+		c.SLSProject, c.SLSLogstore, akID, akSecret, c.FeishuMode, feishu, c.FeishuAppID, feishuAppSecret, c.FeishuChatID,
+		c.Model, c.ReasoningEffort,
 		c.TimeoutSeconds, c.LogWindowSeconds, c.Prompt, boolInt(c.ThrottleEnabled),
 		c.ThrottleThreshold, c.ThrottleCooldownSecs, c.ThrottleFields, c.IngestTokenHash, now, now)
 	if err != nil {
@@ -149,13 +175,19 @@ func (s *Store) UpdateAnalysisConfig(ctx context.Context, c *model.AnalysisConfi
 	if err != nil {
 		return nil, err
 	}
+	feishuAppSecret, err := s.encryptCredential(c.FeishuAppSecret)
+	if err != nil {
+		return nil, err
+	}
 	res, err := s.db.ExecContext(ctx, `UPDATE alert_analysis_configs SET
 		name=?,enabled=?,version=version+1,repository_url=?,repository_ref=?,sls_endpoint=?,
-		sls_project=?,sls_logstore=?,sls_access_key_id=?,sls_access_key_secret=?,feishu_webhook=?,
+		sls_project=?,sls_logstore=?,sls_access_key_id=?,sls_access_key_secret=?,feishu_mode=?,feishu_webhook=?,
+		feishu_app_id=?,feishu_app_secret=?,feishu_chat_id=?,
 		model=?,reasoning_effort=?,timeout_seconds=?,log_window_seconds=?,prompt=?,throttle_enabled=?,
 		throttle_threshold=?,throttle_cooldown_seconds=?,throttle_fields=?,updated_at=? WHERE id=?`,
 		c.Name, boolInt(c.Enabled), c.RepositoryURL, c.RepositoryRef, c.SLSEndpoint, c.SLSProject,
-		c.SLSLogstore, akID, akSecret, feishu, c.Model, c.ReasoningEffort, c.TimeoutSeconds,
+		c.SLSLogstore, akID, akSecret, c.FeishuMode, feishu, c.FeishuAppID, feishuAppSecret, c.FeishuChatID,
+		c.Model, c.ReasoningEffort, c.TimeoutSeconds,
 		c.LogWindowSeconds, c.Prompt, boolInt(c.ThrottleEnabled), c.ThrottleThreshold,
 		c.ThrottleCooldownSecs, c.ThrottleFields, nowRFC3339(), c.ID)
 	if err != nil {
@@ -194,7 +226,8 @@ func (s *Store) GetAnalysisConfig(ctx context.Context, id int64) (*model.Analysi
 }
 
 const analysisConfigSelect = `SELECT id,name,enabled,version,repository_url,repository_ref,
-	sls_endpoint,sls_project,sls_logstore,sls_access_key_id,sls_access_key_secret,feishu_webhook,
+	sls_endpoint,sls_project,sls_logstore,sls_access_key_id,sls_access_key_secret,feishu_mode,feishu_webhook,
+	feishu_app_id,feishu_app_secret,feishu_chat_id,
 	model,reasoning_effort,timeout_seconds,log_window_seconds,prompt,throttle_enabled,
 	throttle_threshold,throttle_cooldown_seconds,throttle_fields,ingest_token_hash,created_at,updated_at
 	FROM alert_analysis_configs`
@@ -204,9 +237,10 @@ type rowScanner interface{ Scan(...any) error }
 func (s *Store) scanAnalysisConfig(row rowScanner) (*model.AnalysisConfig, error) {
 	var c model.AnalysisConfig
 	var enabled, throttle int
-	var akID, akSecret, feishu, created, updated string
+	var akID, akSecret, feishu, feishuAppSecret, created, updated string
 	if err := row.Scan(&c.ID, &c.Name, &enabled, &c.Version, &c.RepositoryURL, &c.RepositoryRef,
-		&c.SLSEndpoint, &c.SLSProject, &c.SLSLogstore, &akID, &akSecret, &feishu,
+		&c.SLSEndpoint, &c.SLSProject, &c.SLSLogstore, &akID, &akSecret, &c.FeishuMode, &feishu,
+		&c.FeishuAppID, &feishuAppSecret, &c.FeishuChatID,
 		&c.Model, &c.ReasoningEffort, &c.TimeoutSeconds, &c.LogWindowSeconds, &c.Prompt,
 		&throttle, &c.ThrottleThreshold, &c.ThrottleCooldownSecs, &c.ThrottleFields,
 		&c.IngestTokenHash, &created, &updated); err != nil {
@@ -221,6 +255,9 @@ func (s *Store) scanAnalysisConfig(row rowScanner) (*model.AnalysisConfig, error
 	}
 	if c.FeishuWebhook, err = s.decryptCredential(feishu); err != nil {
 		return nil, fmt.Errorf("decrypt Feishu webhook: %w", err)
+	}
+	if c.FeishuAppSecret, err = s.decryptCredential(feishuAppSecret); err != nil {
+		return nil, fmt.Errorf("decrypt Feishu app secret: %w", err)
 	}
 	c.Enabled = enabled != 0
 	c.ThrottleEnabled = throttle != 0
@@ -468,11 +505,11 @@ func scanAnalysisTask(ctx context.Context, q querier, id int64) (*model.Analysis
 	var cancelRequested int
 	err := q.QueryRowContext(ctx, `SELECT id,config_id,config_version,config_name,delivery_id,retry_of_task_id,duplicate_of_task_id,
 		fingerprint,alert_payload,config_snapshot,status,phase,attempts,cancel_requested,error_type,error,
-		result_json,notification_status,notification_error,created_at,started_at,finished_at
+		result_json,notification_status,notification_error,feishu_message_id,created_at,started_at,finished_at
 		FROM analysis_tasks WHERE id=?`, id).Scan(&t.ID, &configID, &t.ConfigVersion, &t.ConfigName,
 		&t.DeliveryID, &retryID, &duplicateID, &t.Fingerprint, &alertJSON, &snapshotJSON, &status, &t.Phase,
 		&t.Attempts, &cancelRequested, &t.ErrorType, &t.Error, &t.ResultJSON,
-		&t.NotificationStatus, &t.NotificationError, &created, &started, &finished)
+		&t.NotificationStatus, &t.NotificationError, &t.FeishuMessageID, &created, &started, &finished)
 	if err != nil {
 		return nil, err
 	}
@@ -552,8 +589,9 @@ func (s *Store) SetAnalysisTaskPhase(ctx context.Context, id int64, phase string
 	return err
 }
 
-func (s *Store) SetAnalysisNotification(ctx context.Context, id int64, status, errorMessage string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE analysis_tasks SET notification_status=?,notification_error=? WHERE id=?`, status, errorMessage, id)
+func (s *Store) SetAnalysisNotification(ctx context.Context, id int64, status, errorMessage, messageID string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE analysis_tasks SET notification_status=?,notification_error=?,
+		feishu_message_id=CASE WHEN ?<>'' THEN ? ELSE feishu_message_id END WHERE id=?`, status, errorMessage, messageID, messageID, id)
 	return err
 }
 
