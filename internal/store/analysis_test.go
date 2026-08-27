@@ -29,6 +29,7 @@ func analysisTestConfig(token string) model.AnalysisConfig {
 		SLSProject: "project", SLSLogstore: "raw", SLSAccessKeyID: "ak-id",
 		SLSAccessKeySecret: "ak-secret", FeishuWebhook: "https://open.feishu.cn/hook/secret",
 		FeishuMentionMapping: "znc,Starslayerx | 张宁池 | ou_123",
+		IgnoredErrorCodes:    "4290,5001",
 		ThrottleEnabled:      true, ThrottleThreshold: 1, ThrottleCooldownSecs: 0,
 		ThrottleFields:  "method,endpoint,error_code,error_message",
 		IngestTokenHash: hex.EncodeToString(sum[:]),
@@ -73,6 +74,9 @@ func TestAnalysisConfigSecretsAreEncryptedAndRedeliveriesAreIdempotent(t *testin
 	}
 	if storedTask.ConfigSnapshot.FeishuMentionMapping != cfg.FeishuMentionMapping {
 		t.Fatalf("task mention mapping=%q, want %q", storedTask.ConfigSnapshot.FeishuMentionMapping, cfg.FeishuMentionMapping)
+	}
+	if storedTask.ConfigSnapshot.IgnoredErrorCodes != cfg.IgnoredErrorCodes {
+		t.Fatalf("task ignored error codes=%q, want %q", storedTask.ConfigSnapshot.IgnoredErrorCodes, cfg.IgnoredErrorCodes)
 	}
 }
 

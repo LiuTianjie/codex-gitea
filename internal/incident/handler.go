@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/turning4th/codex-gitea/internal/model"
 )
@@ -57,6 +58,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	if ignoredErrorCode(cfg.IgnoredErrorCodes, alert.ErrorCode) {
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"ok": true, "created": false, "filtered": true,
+			"status": "filtered", "error_code": alert.ErrorCode,
+		})
+		return
+	}
 	deliveryID := strings.TrimSpace(alert.DeliveryID)
 	if deliveryID == "" {
 		deliveryID = strings.TrimSpace(r.Header.Get("X-Alert-Delivery-ID"))
@@ -81,6 +89,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"ok": true, "created": created, "task_id": task.ID,
 		"status": task.Status, "phase": task.Phase,
 	})
+}
+
+func ignoredErrorCode(configured, errorCode string) bool {
+	errorCode = strings.TrimSpace(strings.ToLower(errorCode))
+	if errorCode == "" {
+		return false
+	}
+	for _, candidate := range strings.FieldsFunc(configured, func(r rune) bool {
+		return r == ',' || r == ';' || r == '，' || r == '；' || unicode.IsSpace(r)
+	}) {
+		if strings.ToLower(strings.TrimSpace(candidate)) == errorCode {
+			return true
+		}
+	}
+	return false
 }
 
 func parseAlertEnvelope(body []byte) (model.AlertEnvelope, error) {

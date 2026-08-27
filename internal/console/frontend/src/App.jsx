@@ -570,7 +570,7 @@ const EMPTY_ANALYSIS_CONFIG = {
   name: '', enabled: true, repository_url: '', repository_ref: 'main',
   sls_endpoint: '', sls_project: '', sls_logstore: '',
   sls_access_key_id: '', sls_access_key_secret: '',
-  feishu_mode: 'webhook', feishu_webhook: '', feishu_app_id: '', feishu_app_secret: '', feishu_chat_id: '', feishu_mention_mapping: '',
+  feishu_mode: 'webhook', feishu_webhook: '', feishu_app_id: '', feishu_app_secret: '', feishu_chat_id: '', feishu_mention_mapping: '', ignored_error_codes: '',
   model: '', reasoning_effort: 'high', concurrency: 2, timeout_seconds: 1800,
   log_window_seconds: 180, prompt: '', throttle_enabled: true,
   throttle_threshold: 1, throttle_cooldown_seconds: 0,
@@ -879,7 +879,8 @@ function AnalysisConfigsPanel() {
             <AnalysisField label="此配置并发数（1-16）" value={form.concurrency} type="number" onChange={(v) => setField('concurrency', Number(v))} />
             <AnalysisField label="超时（秒）" value={form.timeout_seconds} type="number" onChange={(v) => setField('timeout_seconds', Number(v))} />
           </ConfigSection>
-          <ConfigSection title="连续相同告警节流">
+          <ConfigSection title="接收过滤与重复告警节流">
+            <label className="field full-field"><span>忽略错误码（逗号、空格或换行分隔）</span><textarea rows="2" value={form.ignored_error_codes || ''} placeholder="4290" onChange={(event) => setField('ignored_error_codes', event.target.value)} /></label>
             <label className="field"><span>是否启用</span><select value={String(form.throttle_enabled)} onChange={(event) => setField('throttle_enabled', event.target.value === 'true')}><option value="true">启用</option><option value="false">关闭</option></select></label>
             <AnalysisField label="相同报错分析次数" value={form.throttle_threshold} type="number" onChange={(v) => setField('throttle_threshold', Number(v))} />
             <AnalysisField label="重新分析间隔（秒，0=直到报错变化）" value={form.throttle_cooldown_seconds} type="number" onChange={(v) => setField('throttle_cooldown_seconds', Number(v))} />

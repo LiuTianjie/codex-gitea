@@ -261,6 +261,13 @@ range `1-16`). The scheduler enforces that limit independently, so a busy test
 configuration does not consume the production configuration's own slots; the
 service-wide safety cap is 16 simultaneous alert analyses.
 
+An alert configuration can ignore exact error codes before task creation. The
+console accepts comma-, whitespace-, semicolon-, or newline-separated values,
+for example `4290, 5001`. Matching is case-insensitive and exact, so ignoring
+`4290` does not ignore `429` or `42900`. A filtered delivery returns HTTP 202
+with `filtered: true`, creates no analysis task, consumes no concurrency slot,
+and sends no Feishu analysis card.
+
 Each alert configuration can also maintain its own Git-author-to-Feishu-user
 mapping. Enter one record per line in the console using this format:
 

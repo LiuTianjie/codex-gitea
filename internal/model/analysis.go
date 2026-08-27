@@ -52,6 +52,7 @@ type AnalysisConfig struct {
 	FeishuAppSecret      string
 	FeishuChatID         string
 	FeishuMentionMapping string
+	IgnoredErrorCodes    string
 	Model                string
 	ReasoningEffort      string
 	Concurrency          int
@@ -79,6 +80,7 @@ func (c AnalysisConfig) Snapshot() AnalysisConfigSnapshot {
 		SLSProject:           c.SLSProject,
 		SLSLogstore:          c.SLSLogstore,
 		FeishuMentionMapping: c.FeishuMentionMapping,
+		IgnoredErrorCodes:    c.IgnoredErrorCodes,
 		Model:                c.Model,
 		ReasoningEffort:      c.ReasoningEffort,
 		Concurrency:          c.Concurrency,
@@ -102,6 +104,7 @@ type AnalysisConfigSnapshot struct {
 	SLSProject           string `json:"sls_project"`
 	SLSLogstore          string `json:"sls_logstore"`
 	FeishuMentionMapping string `json:"feishu_mention_mapping,omitempty"`
+	IgnoredErrorCodes    string `json:"ignored_error_codes,omitempty"`
 	Model                string `json:"model"`
 	ReasoningEffort      string `json:"reasoning_effort"`
 	Concurrency          int    `json:"concurrency"`

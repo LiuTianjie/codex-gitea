@@ -32,6 +32,7 @@ type analysisConfigPayload struct {
 	FeishuAppSecret      string `json:"feishu_app_secret"`
 	FeishuChatID         string `json:"feishu_chat_id"`
 	FeishuMentionMapping string `json:"feishu_mention_mapping"`
+	IgnoredErrorCodes    string `json:"ignored_error_codes"`
 	Model                string `json:"model"`
 	ReasoningEffort      string `json:"reasoning_effort"`
 	Concurrency          int    `json:"concurrency"`
@@ -53,6 +54,7 @@ func (p analysisConfigPayload) model() model.AnalysisConfig {
 		FeishuMode: p.FeishuMode, FeishuWebhook: p.FeishuWebhook,
 		FeishuAppID: p.FeishuAppID, FeishuAppSecret: p.FeishuAppSecret, FeishuChatID: p.FeishuChatID,
 		FeishuMentionMapping: p.FeishuMentionMapping,
+		IgnoredErrorCodes:    p.IgnoredErrorCodes,
 		Model:                p.Model, ReasoningEffort: p.ReasoningEffort, Concurrency: p.Concurrency,
 		TimeoutSeconds: p.TimeoutSeconds, LogWindowSeconds: p.LogWindowSeconds,
 		Prompt: p.Prompt, ThrottleEnabled: p.ThrottleEnabled,
@@ -367,6 +369,7 @@ func analysisConfigView(cfg model.AnalysisConfig) map[string]any {
 		"feishu_mode": cfg.FeishuMode, "feishu_webhook": secret(cfg.FeishuWebhook),
 		"feishu_app_id": cfg.FeishuAppID, "feishu_app_secret": secret(cfg.FeishuAppSecret), "feishu_chat_id": cfg.FeishuChatID,
 		"feishu_mention_mapping": cfg.FeishuMentionMapping,
+		"ignored_error_codes":    cfg.IgnoredErrorCodes,
 		"model":                  cfg.Model, "reasoning_effort": cfg.ReasoningEffort, "concurrency": cfg.Concurrency,
 		"timeout_seconds": cfg.TimeoutSeconds, "log_window_seconds": cfg.LogWindowSeconds, "prompt": cfg.Prompt,
 		"throttle_enabled": cfg.ThrottleEnabled, "throttle_threshold": cfg.ThrottleThreshold,

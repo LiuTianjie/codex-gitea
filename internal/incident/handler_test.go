@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -14,6 +15,54 @@ import (
 	"github.com/turning4th/codex-gitea/internal/model"
 	"github.com/turning4th/codex-gitea/internal/store"
 )
+
+func TestHandlerFiltersConfiguredErrorCodeBeforeCreatingTask(t *testing.T) {
+	s, cfg, token := createIncidentTestStore(t)
+	cfg.IgnoredErrorCodes = "4290, 5001\nHTTP_BUSY"
+	updated, err := s.UpdateAnalysisConfig(context.Background(), &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wakes := 0
+	h := &Handler{Store: s, Wake: func() { wakes++ }}
+	body := []byte(`{"delivery_id":"filtered-1","endpoint":"/api/test","error_code":4290,"error_message":"too many requests"}`)
+	r := httptest.NewRequest(http.MethodPost, "/hooks/alert-analysis/"+itoa(updated.ID)+"/"+token, bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Created   bool   `json:"created"`
+		Filtered  bool   `json:"filtered"`
+		Status    string `json:"status"`
+		ErrorCode string `json:"error_code"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Created || !response.Filtered || response.Status != "filtered" || response.ErrorCode != "4290" {
+		t.Fatalf("response=%+v", response)
+	}
+	tasks, err := s.ListAnalysisTasks(context.Background(), model.AnalysisTaskFilter{Limit: 10})
+	if err != nil || len(tasks) != 0 || wakes != 0 {
+		t.Fatalf("tasks=%d wakes=%d err=%v", len(tasks), wakes, err)
+	}
+}
+
+func TestIgnoredErrorCodeUsesExactMatchAndCommonSeparators(t *testing.T) {
+	configured := "4290, 5001；HTTP_BUSY\n9000　7000"
+	for _, code := range []string{"4290", " 5001 ", "http_busy", "9000", "7000"} {
+		if !ignoredErrorCode(configured, code) {
+			t.Errorf("code %q should be ignored", code)
+		}
+	}
+	for _, code := range []string{"429", "42900", "", "HTTP"} {
+		if ignoredErrorCode(configured, code) {
+			t.Errorf("code %q should not be ignored", code)
+		}
+	}
+}
 
 func createIncidentTestStore(t *testing.T) (*store.Store, model.AnalysisConfig, string) {
 	t.Helper()

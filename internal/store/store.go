@@ -162,6 +162,7 @@ func migrateSchema(db *sql.DB) error {
 		{table: "alert_analysis_configs", name: "feishu_app_secret", def: "TEXT NOT NULL DEFAULT ''"},
 		{table: "alert_analysis_configs", name: "feishu_chat_id", def: "TEXT NOT NULL DEFAULT ''"},
 		{table: "alert_analysis_configs", name: "feishu_mention_mapping", def: "TEXT NOT NULL DEFAULT ''"},
+		{table: "alert_analysis_configs", name: "ignored_error_codes", def: "TEXT NOT NULL DEFAULT ''"},
 		{table: "alert_analysis_configs", name: "concurrency", def: "INTEGER NOT NULL DEFAULT 2"},
 		{table: "analysis_tasks", name: "feishu_message_id", def: "TEXT NOT NULL DEFAULT ''"},
 	} {

@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS alert_analysis_configs(
   feishu_app_secret TEXT NOT NULL DEFAULT '',
   feishu_chat_id TEXT NOT NULL DEFAULT '',
   feishu_mention_mapping TEXT NOT NULL DEFAULT '',
+  ignored_error_codes TEXT NOT NULL DEFAULT '',
   model TEXT NOT NULL DEFAULT '',
   reasoning_effort TEXT NOT NULL DEFAULT '',
   concurrency INTEGER NOT NULL DEFAULT 2,
