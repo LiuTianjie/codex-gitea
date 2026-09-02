@@ -140,26 +140,40 @@ MINIMAX_BASE_URL=https://relay.example.com
 The job is still stored and posted as the `minimax` reviewer, so it can be
 tracked separately from Codex and Claude Code.
 
+## Production deploy (Luma)
+
+The live service is Luma application `codex-gitea` at
+`https://codex-bot.itool.tech`. Production updates are a local Docker/Buildx
+build that Luma uploads to the Builder Registry and rolls out in the same
+command. Do not publish GHCR `:latest` and then `luma deploy` that mutable tag.
+
+From the commit you want live, on a machine that can reach the Builder Registry:
+
+```bash
+luma build local . --platform linux/amd64 --timeout 3000
+```
+
+`--platform linux/amd64` matches the pinned `lab` node. `luma.yaml` is
+gitignored and holds runtime secrets plus the existing volume names; keep those
+volume names unchanged so `/data`, `/cache`, `/work`, `/codex-home`,
+`/claude-home`, and `/cc-switch` are preserved. GitHub Actions still builds a
+GHCR image for CI smoke tests; that image is not the production rollout path.
+
+A deploy is complete only after Luma reports a new stable `codex-gitea`
+version whose image uses a `local-<build-id>` tag (not GHCR `latest`), and both
+`/healthz` and `/readyz` return `ok`.
+
 ## Quick start
 
-```bash
-docker run --rm \
-  -p 18080:8080 \
-  -e ADMIN_PASSWORD=choose-a-strong-password \
-  -e GITEA_URL=https://gitea.example.com \
-  -e GITEA_TOKEN=... \
-  ghcr.io/liutianjie/gitea-review-agent:latest
-```
-
-Then open `http://localhost:18080/admin`, finish the runtime configuration, and
-add a Gitea webhook pointing to `http://<host>:8080/webhook`.
-
-For local development or persistent data, use Docker Compose:
+Local trial, not production:
 
 ```bash
-export ADMIN_PASSWORD=choose-a-strong-password
 docker compose up -d
 ```
+
+Set `ADMIN_PASSWORD` (and `SECRET_KEY` before creating alert-analysis configs).
+Then open `http://localhost:8080/admin`, finish the runtime configuration, and
+add a Gitea webhook pointing to `http://<host>:8080/webhook`.
 
 Persist these paths in production:
 
@@ -422,10 +436,10 @@ go build ./...
 go test ./...
 ```
 
-The admin console is a Vite/React app embedded into the Go binary. CI and the
-Dockerfile build it automatically before compiling the service, so deploying the
-new image is enough. For local `go build` / `go test`, rebuild it after changing
-console UI code:
+The admin console is a Vite/React app embedded into the Go binary. The
+Dockerfile builds it automatically before compiling the service. Production
+rollout is `luma build local` from this checkout, not a GHCR pull. For local
+`go build` / `go test`, rebuild the console after changing UI code:
 
 ```bash
 cd internal/console/frontend

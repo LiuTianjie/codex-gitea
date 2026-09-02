@@ -865,11 +865,7 @@ http://127.0.0.1:18080/public/skills/tifenxia-fe/SKILL.md
         <div class="wrap split">
           <div class="terminal" aria-label="部署命令示例">
             <div class="terminal-head"><span></span><span></span><span></span></div>
-            <pre><code>docker run --rm \
-  -p 18080:8080 \
-  -e GITEA_BASE_URL=https://gitea.example.com \
-  -e GITEA_TOKEN=... \
-  ghcr.io/liutianjie/gitea-review-agent:latest</code></pre>
+            <pre><code>luma build local . --platform linux/amd64 --timeout 3000</code></pre>
           </div>
           <div>
             <div class="section-head">
@@ -877,8 +873,8 @@ http://127.0.0.1:18080/public/skills/tifenxia-fe/SKILL.md
             </div>
             <div class="timeline">
               <div class="line-item">
-                <strong>1. 启动服务</strong>
-                <p>使用预构建镜像启动服务，填入 Gitea 地址和访问令牌。</p>
+                <strong>1. 发布服务</strong>
+                <p>在本机用 Luma 构建并滚动更新现有 <code>codex-gitea</code> 应用，不要发布 GHCR <code>:latest</code> 再 deploy。</p>
               </div>
               <div class="line-item">
                 <strong>2. 配置 Webhook</strong>

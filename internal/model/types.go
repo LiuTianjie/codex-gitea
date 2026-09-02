@@ -391,6 +391,10 @@ type AnalysisTrendPoint struct {
 	TotalFindings        int       `json:"total_findings"`
 	OpenFindings         int       `json:"open_findings"`
 	HighCriticalOpen     int       `json:"high_critical_open"`
+	TotalAlerts          int       `json:"total_alerts"`
+	AnalyzedAlerts       int       `json:"analyzed_alerts"`
+	FailedAlerts         int       `json:"failed_alerts"`
+	SuppressedAlerts     int       `json:"suppressed_alerts"`
 }
 
 type AnalysisSummary struct {
@@ -410,6 +414,57 @@ type AnalysisSummary struct {
 	RepeatedTitles       []TitleSummary          `json:"repeated_titles"`
 	RecentSevere         []SevereFindingSummary  `json:"recent_severe"`
 	AgentOverlap         []AgentOverlapSummary   `json:"agent_overlap"`
+	Alerts               AlertAnalysisSummary    `json:"alerts"`
+}
+
+// AlertAnalysisSummary aggregates durable alert-analysis tasks and their
+// structured model results. Raw alert fields and assessed conclusions remain
+// separate so the dashboard does not mistake source severity for analysis.
+type AlertAnalysisSummary struct {
+	Total               int                     `json:"total"`
+	Analyzed            int                     `json:"analyzed"`
+	Failed              int                     `json:"failed"`
+	Suppressed          int                     `json:"suppressed"`
+	Canceled            int                     `json:"canceled"`
+	AnalysisSuccessRate float64                 `json:"analysis_success_rate"`
+	SuppressionRate     float64                 `json:"suppression_rate"`
+	HighCritical        int                     `json:"high_critical"`
+	DistinctServices    int                     `json:"distinct_services"`
+	ByClassification    map[string]int          `json:"by_classification"`
+	BySeverity          map[string]int          `json:"by_severity"`
+	ByConfidence        map[string]int          `json:"by_confidence"`
+	ByEnvironment       map[string]int          `json:"by_environment"`
+	TopServices         []AlertDimensionSummary `json:"top_services"`
+	TopEndpoints        []AlertDimensionSummary `json:"top_endpoints"`
+	TopErrorCodes       []AlertDimensionSummary `json:"top_error_codes"`
+	RecurringAlerts     []RecurringAlertSummary `json:"recurring_alerts"`
+	RecentSevere        []SevereAlertSummary    `json:"recent_severe"`
+}
+
+type AlertDimensionSummary struct {
+	Label string `json:"label"`
+	Count int    `json:"count"`
+}
+
+type RecurringAlertSummary struct {
+	Title     string `json:"title"`
+	Service   string `json:"service"`
+	Endpoint  string `json:"endpoint"`
+	ErrorCode string `json:"error_code"`
+	Count     int    `json:"count"`
+}
+
+type SevereAlertSummary struct {
+	TaskID         int64  `json:"task_id"`
+	Title          string `json:"title"`
+	Classification string `json:"classification"`
+	Severity       string `json:"severity"`
+	Environment    string `json:"environment"`
+	Service        string `json:"service"`
+	Endpoint       string `json:"endpoint"`
+	ErrorCode      string `json:"error_code"`
+	Confidence     string `json:"confidence"`
+	CreatedAt      string `json:"created_at"`
 }
 
 type AgentSummary struct {

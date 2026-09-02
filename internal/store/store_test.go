@@ -1292,6 +1292,62 @@ func TestBuildAnalysisTrendBucketsReviewRunDataByDay(t *testing.T) {
 	}
 }
 
+func TestBuildAnalysisSummaryIncludesHistoricalAlertInsights(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	insert := func(delivery, fingerprint, status, alert, result, created string) {
+		t.Helper()
+		_, err := st.db.ExecContext(ctx, `INSERT INTO analysis_tasks(
+			config_id,config_version,config_name,delivery_id,fingerprint,alert_payload,config_snapshot,
+			status,phase,result_json,created_at,finished_at)
+			VALUES(NULL,1,'serverx prod',?,?,?,?,?,'done',?,?,?)`,
+			delivery, fingerprint, alert, `{}`, status, result, created, created)
+		if err != nil {
+			t.Fatalf("insert alert task %s: %v", delivery, err)
+		}
+	}
+	alert := `{"environment":"PROD","service":"serverx","title":"订单接口异常","method":"POST","endpoint":"/api/orders","error_code":"500"}`
+	result := `{"classification":"code_regression","confidence":"high","assessed_severity":"high","summary":"订单接口发生回归"}`
+	insert("alert-1", "orders-500", "succeeded", alert, result, "2026-06-19T01:00:00Z")
+	insert("alert-2", "orders-500", "suppressed", alert, ``, "2026-06-19T01:01:00Z")
+	insert("alert-3", "cache-timeout", "failed", `{"environment":"staging","service":"worker","method":"RUN","endpoint":"cache-sync","error_code":"TIMEOUT"}`, ``, "2026-06-20T01:00:00Z")
+
+	summary, err := st.BuildAnalysisSummary(ctx)
+	if err != nil {
+		t.Fatalf("BuildAnalysisSummary: %v", err)
+	}
+	alerts := summary.Alerts
+	if alerts.Total != 3 || alerts.Analyzed != 1 || alerts.Failed != 1 || alerts.Suppressed != 1 {
+		t.Fatalf("alert lifecycle mismatch: %+v", alerts)
+	}
+	if alerts.AnalysisSuccessRate != 0.5 || alerts.SuppressionRate != float64(1)/3 || alerts.HighCritical != 1 {
+		t.Fatalf("alert rates mismatch: %+v", alerts)
+	}
+	if alerts.ByClassification["code_regression"] != 1 || alerts.BySeverity["high"] != 1 || alerts.ByConfidence["high"] != 1 || alerts.ByEnvironment["prod"] != 2 {
+		t.Fatalf("alert dimensions mismatch: %+v", alerts)
+	}
+	if len(alerts.TopServices) != 2 || alerts.TopServices[0].Label != "serverx" || alerts.TopServices[0].Count != 2 {
+		t.Fatalf("top services mismatch: %+v", alerts.TopServices)
+	}
+	if len(alerts.RecurringAlerts) != 1 || alerts.RecurringAlerts[0].Count != 2 || alerts.RecurringAlerts[0].Title != "订单接口异常" {
+		t.Fatalf("recurring alerts mismatch: %+v", alerts.RecurringAlerts)
+	}
+	if len(alerts.RecentSevere) != 1 || alerts.RecentSevere[0].TaskID == 0 || alerts.RecentSevere[0].Classification != "code_regression" {
+		t.Fatalf("recent severe alerts mismatch: %+v", alerts.RecentSevere)
+	}
+
+	points, err := st.BuildAnalysisTrend(ctx, 14, "day")
+	if err != nil {
+		t.Fatalf("BuildAnalysisTrend: %v", err)
+	}
+	if len(points) != 2 || points[0].Bucket != "2026-06-19" || points[0].TotalAlerts != 2 || points[0].AnalyzedAlerts != 1 || points[0].SuppressedAlerts != 1 {
+		t.Fatalf("first alert trend mismatch: %+v", points)
+	}
+	if points[1].Bucket != "2026-06-20" || points[1].TotalAlerts != 1 || points[1].FailedAlerts != 1 {
+		t.Fatalf("second alert trend mismatch: %+v", points[1])
+	}
+}
+
 func TestAnalysisAgentOverlapIsScopedToSamePull(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()

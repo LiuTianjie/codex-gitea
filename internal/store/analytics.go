@@ -65,15 +65,18 @@ func (s *Store) BuildAnalysisTrend(ctx context.Context, limit int, interval stri
 	if limit <= 0 || limit > 100 {
 		limit = defaultTrendLimit(interval)
 	}
-	bucketExpr := trendBucketExpr("COALESCE(finished_at, started_at)", interval)
+	reviewBucketExpr := trendBucketExpr("COALESCE(finished_at, started_at)", interval)
+	alertBucketExpr := trendBucketExpr("COALESCE(finished_at, started_at, created_at)", interval)
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+bucketExpr+` AS bucket
-		 FROM review_runs
-		 WHERE status IN (?, ?)
-		   AND COALESCE(finished_at, started_at, '') <> ''
-		 GROUP BY bucket
-		 ORDER BY bucket DESC
-		 LIMIT ?`, string(model.ReviewRunDone), string(model.ReviewRunFailed), limit)
+		`SELECT bucket FROM (
+		   SELECT `+reviewBucketExpr+` AS bucket
+		   FROM review_runs
+		   WHERE status IN (?, ?) AND COALESCE(finished_at, started_at, '') <> ''
+		   UNION
+		   SELECT `+alertBucketExpr+` AS bucket
+		   FROM analysis_tasks
+		   WHERE COALESCE(finished_at, started_at, created_at, '') <> ''
+		 ) ORDER BY bucket DESC LIMIT ?`, string(model.ReviewRunDone), string(model.ReviewRunFailed), limit)
 	if err != nil {
 		return nil, fmt.Errorf("analysis trend buckets: %w", err)
 	}
@@ -142,6 +145,19 @@ func (s *Store) analysisTrendPoint(ctx context.Context, bucket, interval string)
 		string(model.SeverityHigh), string(model.SeverityCritical), bucket)
 	if err := row.Scan(&point.TotalFindings, &point.OpenFindings, &point.HighCriticalOpen); err != nil {
 		return model.AnalysisTrendPoint{}, fmt.Errorf("scan analysis trend findings: %w", err)
+	}
+	alertBucketExpr := trendBucketExpr("COALESCE(finished_at, started_at, created_at)", interval)
+	row = s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*),
+		   COALESCE(SUM(CASE WHEN status=? THEN 1 ELSE 0 END), 0),
+		   COALESCE(SUM(CASE WHEN status=? THEN 1 ELSE 0 END), 0),
+		   COALESCE(SUM(CASE WHEN status=? THEN 1 ELSE 0 END), 0)
+		 FROM analysis_tasks
+		 WHERE COALESCE(finished_at, started_at, created_at, '') <> ''
+		   AND `+alertBucketExpr+` = ?`,
+		string(model.AnalysisTaskSucceeded), string(model.AnalysisTaskFailed), string(model.AnalysisTaskSuppressed), bucket)
+	if err := row.Scan(&point.TotalAlerts, &point.AnalyzedAlerts, &point.FailedAlerts, &point.SuppressedAlerts); err != nil {
+		return model.AnalysisTrendPoint{}, fmt.Errorf("scan alert analysis trend: %w", err)
 	}
 	return point, nil
 }
@@ -216,6 +232,12 @@ func (s *Store) BuildAnalysisSummary(ctx context.Context) (model.AnalysisSummary
 		ByAgent:    map[string]model.AgentSummary{},
 		BySeverity: map[string]int{},
 		ByStatus:   map[string]int{},
+		Alerts: model.AlertAnalysisSummary{
+			ByClassification: map[string]int{},
+			BySeverity:       map[string]int{},
+			ByConfidence:     map[string]int{},
+			ByEnvironment:    map[string]int{},
+		},
 	}
 	if err := s.fillReviewRunSummary(ctx, &summary); err != nil {
 		return model.AnalysisSummary{}, err
@@ -226,11 +248,163 @@ func (s *Store) BuildAnalysisSummary(ctx context.Context) (model.AnalysisSummary
 	if err := s.fillDeveloperSummary(ctx, &summary); err != nil {
 		return model.AnalysisSummary{}, err
 	}
+	if err := s.fillAlertAnalysisSummary(ctx, &summary.Alerts); err != nil {
+		return model.AnalysisSummary{}, err
+	}
 	completed := summary.SuccessfulReviewRuns + summary.FailedReviewRuns
 	if completed > 0 {
 		summary.SuccessRate = float64(summary.SuccessfulReviewRuns) / float64(completed)
 	}
 	return summary, nil
+}
+
+func (s *Store) fillAlertAnalysisSummary(ctx context.Context, summary *model.AlertAnalysisSummary) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,status,fingerprint,alert_payload,result_json,created_at
+		FROM analysis_tasks ORDER BY id DESC`)
+	if err != nil {
+		return fmt.Errorf("alert analysis summary: %w", err)
+	}
+	defer rows.Close()
+
+	services := map[string]int{}
+	endpoints := map[string]int{}
+	errorCodes := map[string]int{}
+	type recurring struct {
+		item model.RecurringAlertSummary
+	}
+	recurrences := map[string]*recurring{}
+
+	for rows.Next() {
+		var id int64
+		var status, fingerprint, alertPayload, resultJSON, createdAt string
+		if err := rows.Scan(&id, &status, &fingerprint, &alertPayload, &resultJSON, &createdAt); err != nil {
+			return fmt.Errorf("scan alert analysis summary: %w", err)
+		}
+		summary.Total++
+		switch model.AnalysisTaskStatus(status) {
+		case model.AnalysisTaskSucceeded:
+			summary.Analyzed++
+		case model.AnalysisTaskFailed:
+			summary.Failed++
+		case model.AnalysisTaskSuppressed:
+			summary.Suppressed++
+		case model.AnalysisTaskCanceled:
+			summary.Canceled++
+		}
+		var alert model.AlertEnvelope
+		if err := json.Unmarshal([]byte(alertPayload), &alert); err != nil {
+			continue // Keep lifecycle totals available if a legacy payload is malformed.
+		}
+
+		incrementNormalized(summary.ByEnvironment, alert.Environment, "unknown")
+		incrementNormalized(services, alert.Service, "未标注服务")
+		incrementNormalized(endpoints, strings.TrimSpace(strings.Join([]string{alert.Method, alert.Endpoint}, " ")), "未标注接口")
+		incrementNormalized(errorCodes, alert.ErrorCode, "未标注错误码")
+
+		key := strings.TrimSpace(fingerprint)
+		if key == "" {
+			key = strings.Join([]string{alert.Service, alert.Method, alert.Endpoint, alert.ErrorCode, alert.ErrorMessage}, "|")
+		}
+		if recurrences[key] == nil {
+			title := strings.TrimSpace(alert.Title)
+			if title == "" {
+				title = strings.TrimSpace(alert.Rule)
+			}
+			if title == "" {
+				title = "未命名告警"
+			}
+			recurrences[key] = &recurring{item: model.RecurringAlertSummary{Title: title, Service: alert.Service, Endpoint: strings.TrimSpace(strings.Join([]string{alert.Method, alert.Endpoint}, " ")), ErrorCode: alert.ErrorCode}}
+		}
+		recurrences[key].item.Count++
+
+		if strings.TrimSpace(resultJSON) == "" {
+			continue
+		}
+		var result model.AnalysisResult
+		if err := json.Unmarshal([]byte(resultJSON), &result); err != nil {
+			continue // Preserve legacy/malformed task history without breaking reports.
+		}
+		classification := normalizedLabel(result.Classification, "unknown")
+		severity := normalizedLabel(result.AssessedSeverity, "unknown")
+		confidence := normalizedLabel(result.Confidence, "unknown")
+		summary.ByClassification[classification]++
+		summary.BySeverity[severity]++
+		summary.ByConfidence[confidence]++
+		if severity == "critical" || severity == "high" {
+			summary.HighCritical++
+			if len(summary.RecentSevere) < 10 {
+				title := strings.TrimSpace(alert.Title)
+				if title == "" {
+					title = strings.TrimSpace(result.Summary)
+				}
+				summary.RecentSevere = append(summary.RecentSevere, model.SevereAlertSummary{
+					TaskID: id, Title: title, Classification: classification, Severity: severity,
+					Environment: alert.Environment, Service: alert.Service,
+					Endpoint:  strings.TrimSpace(strings.Join([]string{alert.Method, alert.Endpoint}, " ")),
+					ErrorCode: alert.ErrorCode, Confidence: confidence, CreatedAt: createdAt,
+				})
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate alert analysis summary: %w", err)
+	}
+
+	completed := summary.Analyzed + summary.Failed
+	if completed > 0 {
+		summary.AnalysisSuccessRate = float64(summary.Analyzed) / float64(completed)
+	}
+	if summary.Total > 0 {
+		summary.SuppressionRate = float64(summary.Suppressed) / float64(summary.Total)
+	}
+	summary.TopServices = topAlertDimensions(services, 8)
+	summary.DistinctServices = len(services)
+	summary.TopEndpoints = topAlertDimensions(endpoints, 8)
+	summary.TopErrorCodes = topAlertDimensions(errorCodes, 8)
+	for _, recurrence := range recurrences {
+		if recurrence.item.Count > 1 {
+			summary.RecurringAlerts = append(summary.RecurringAlerts, recurrence.item)
+		}
+	}
+	sort.Slice(summary.RecurringAlerts, func(i, j int) bool {
+		if summary.RecurringAlerts[i].Count != summary.RecurringAlerts[j].Count {
+			return summary.RecurringAlerts[i].Count > summary.RecurringAlerts[j].Count
+		}
+		return summary.RecurringAlerts[i].Title < summary.RecurringAlerts[j].Title
+	})
+	if len(summary.RecurringAlerts) > 10 {
+		summary.RecurringAlerts = summary.RecurringAlerts[:10]
+	}
+	return nil
+}
+
+func normalizedLabel(value, fallback string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func incrementNormalized(counts map[string]int, value, fallback string) {
+	counts[normalizedLabel(value, fallback)]++
+}
+
+func topAlertDimensions(counts map[string]int, limit int) []model.AlertDimensionSummary {
+	items := make([]model.AlertDimensionSummary, 0, len(counts))
+	for label, count := range counts {
+		items = append(items, model.AlertDimensionSummary{Label: label, Count: count})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Count != items[j].Count {
+			return items[i].Count > items[j].Count
+		}
+		return items[i].Label < items[j].Label
+	})
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	return items
 }
 
 func (s *Store) fillReviewRunSummary(ctx context.Context, summary *model.AnalysisSummary) error {

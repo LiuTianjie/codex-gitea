@@ -1263,6 +1263,8 @@ function AnalysisReport({ report, trend = [], trendInterval = 'day', setTrendInt
 
       <TrendOverview points={trend} interval={trendInterval} onIntervalChange={setTrendInterval} />
 
+      <AlertAnalysisInsights alerts={summary.alerts || {}} trend={trend} interval={trendInterval} />
+
       <div className="chart-grid">
         <BarChartBlock title="按严重度" label="Risk" items={severityChart} empty="暂无严重度数据" tone="risk" />
         <BarChartBlock title="按状态" label="Lifecycle" items={statusChart} empty="暂无状态数据" tone="status" />
@@ -1324,6 +1326,125 @@ function AnalysisReport({ report, trend = [], trendInterval = 'day', setTrendInt
         <MultiAgentOverlap report={report} items={summary.agent_overlap || []} />
       </div>
     </>
+  )
+}
+
+const alertInsightLabels = {
+  expected_business: '预期业务行为',
+  code_regression: '代码回归',
+  data: '数据问题',
+  infra: '基础设施',
+  unknown: '待确认',
+  critical: '严重',
+  high: '高',
+  medium: '中',
+  low: '低',
+  prod: '生产',
+  production: '生产',
+  staging: '预发',
+  test: '测试'
+}
+
+function alertInsightLabel(value) {
+  return alertInsightLabels[value] || value || '未标注'
+}
+
+function AlertAnalysisInsights({ alerts, trend = [], interval = 'day' }) {
+  const total = alerts.total || 0
+  const classificationChart = Object.entries(alerts.by_classification || {})
+    .map(([label, value]) => ({ label: alertInsightLabel(label), value }))
+    .sort((a, b) => b.value - a.value)
+  const severityChart = Object.entries(alerts.by_severity || {})
+    .map(([label, value]) => ({ label: alertInsightLabel(label), value }))
+    .sort((a, b) => b.value - a.value)
+  const environmentChart = Object.entries(alerts.by_environment || {})
+    .map(([label, value]) => ({ label: alertInsightLabel(label), value }))
+    .sort((a, b) => b.value - a.value)
+  const confidenceChart = Object.entries(alerts.by_confidence || {})
+    .map(([label, value]) => ({ label: alertInsightLabel(label), value }))
+    .sort((a, b) => b.value - a.value)
+  const alertTrend = (trend || []).map((item, index) => {
+    const bucket = item.bucket || item.day || prettyTime(item.finished_at).slice(0, 10)
+    return {
+      id: `${bucket}-alert-${index}`,
+      label: formatTrendBucket(bucket, item.interval || interval),
+      total: item.total_alerts || 0,
+      analyzed: item.analyzed_alerts || 0,
+      suppressed: item.suppressed_alerts || 0
+    }
+  }).filter((item) => item.total > 0)
+
+  return (
+    <section className="alert-insights">
+      <div className="insight-section-head">
+        <div>
+          <span>Alert intelligence</span>
+          <h3>历史告警洞察</h3>
+          <p>基于告警原始字段与已完成分析结论聚合；评估严重度不等同于来源告警等级。</p>
+        </div>
+        <strong>{total}<small> 条历史告警</small></strong>
+      </div>
+
+      {!total ? <div className="empty-state compact">产生告警分析记录后，这里会展示问题类型、严重度、来源与重复模式。</div> : (
+        <>
+          <div className="stats-grid alert-stats-grid">
+            <StatCard label="分析成功率" value={percent(alerts.analysis_success_rate || 0)} hint={`${alerts.analyzed || 0} 成功 · ${alerts.failed || 0} 失败`} />
+            <StatCard label="重复抑制率" value={percent(alerts.suppression_rate || 0)} hint={`${alerts.suppressed || 0} 条未重复分析`} />
+            <StatCard label="严重告警" value={alerts.high_critical || 0} hint="模型评估 high + critical" />
+            <StatCard label="问题类型" value={classificationChart.length} hint="已识别分类" />
+            <StatCard label="涉及服务" value={alerts.distinct_services || 0} hint="按历史记录统计" />
+          </div>
+
+          {alertTrend.length ? <LineChart
+            title="告警处理趋势"
+            subtitle={`${alertTrend[0].label} -> ${alertTrend[alertTrend.length - 1].label}`}
+            points={alertTrend}
+            series={[
+              { key: 'total', label: '告警总数', color: '#315f7d' },
+              { key: 'analyzed', label: '已分析', color: '#2f6f55' },
+              { key: 'suppressed', label: '重复抑制', color: '#9b6f3d' }
+            ]}
+          /> : null}
+
+          <div className="chart-grid alert-chart-grid">
+            <BarChartBlock title="问题类型" label="Cause" items={classificationChart} empty="暂无类型结论" tone="agent" />
+            <BarChartBlock title="评估严重度" label="Impact" items={severityChart} empty="暂无严重度结论" tone="risk" />
+            <BarChartBlock title="告警环境" label="Scope" items={environmentChart} empty="暂无环境数据" tone="developer" />
+            <BarChartBlock title="结论置信度" label="Evidence" items={confidenceChart} empty="暂无置信度数据" tone="status" />
+          </div>
+
+          <div className="alert-dimension-grid">
+            <TableBlock title="Top 服务" headers={['服务', '告警数']} empty="暂无服务数据">
+              {(alerts.top_services || []).map((item) => <tr key={item.label}><td>{item.label}</td><td>{item.count}</td></tr>)}
+            </TableBlock>
+            <TableBlock title="Top 接口 / 任务" headers={['接口 / 任务', '告警数']} empty="暂无接口数据">
+              {(alerts.top_endpoints || []).map((item) => <tr key={item.label}><td><code>{item.label}</code></td><td>{item.count}</td></tr>)}
+            </TableBlock>
+            <TableBlock title="Top 错误码" headers={['错误码', '告警数']} empty="暂无错误码数据">
+              {(alerts.top_error_codes || []).map((item) => <tr key={item.label}><td><code>{item.label}</code></td><td>{item.count}</td></tr>)}
+            </TableBlock>
+          </div>
+
+          <TableBlock title="高频重复告警" headers={['告警', '服务', '接口 / 任务', '错误码', '次数']} empty="暂无重复告警">
+            {(alerts.recurring_alerts || []).map((item, index) => (
+              <tr key={`${item.title}-${item.endpoint}-${index}`}>
+                <td>{item.title}</td><td>{item.service || '-'}</td><td><code>{item.endpoint || '-'}</code></td><td>{item.error_code || '-'}</td><td>{item.count}</td>
+              </tr>
+            ))}
+          </TableBlock>
+
+          <TableBlock title="近期严重告警" headers={['任务', '评估', '问题类型', '环境 / 服务', '接口 / 错误码', '告警', '时间']} empty="暂无 high/critical 告警">
+            {(alerts.recent_severe || []).map((item) => (
+              <tr key={item.task_id}>
+                <td>#{item.task_id}</td><td><StatusBadge status={item.severity} /></td><td>{alertInsightLabel(item.classification)}</td>
+                <td>{[alertInsightLabel(item.environment), item.service].filter(Boolean).join(' · ') || '-'}</td>
+                <td><code>{[item.endpoint, item.error_code].filter(Boolean).join(' · ') || '-'}</code></td><td>{item.title || '-'}</td><td>{prettyTime(item.created_at)}</td>
+              </tr>
+            ))}
+          </TableBlock>
+        </>
+      )}
+    </section>
   )
 }
 

@@ -1216,6 +1216,91 @@ button.log-pill:hover {
   margin-bottom: 8px;
 }
 
+.alert-insights {
+  position: relative;
+  padding: 20px;
+  margin: 8px 0 24px;
+  overflow: hidden;
+  border: 1px solid #d9ddd7;
+  border-radius: 10px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(47, 111, 85, 0.11), transparent 31%),
+    linear-gradient(145deg, #f7faf6 0%, #fff 42%, #fbfaf5 100%);
+}
+
+.alert-insights::before {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 4px;
+  content: "";
+  background: linear-gradient(90deg, #2f6f55, #315f7d 52%, #9b6f3d);
+}
+
+.insight-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 16px;
+}
+
+.insight-section-head span {
+  color: #547263;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.insight-section-head h3 {
+  margin-top: 5px;
+  font-size: 21px;
+}
+
+.insight-section-head p {
+  max-width: 720px;
+  margin-top: 5px;
+  color: #6d756f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.insight-section-head > strong {
+  color: #234c3d;
+  font-size: 30px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.insight-section-head > strong small {
+  color: #6d756f;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.alert-stats-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin-bottom: 0;
+}
+
+.alert-insights > .trend-card {
+  margin-top: 12px;
+}
+
+.alert-chart-grid {
+  margin-top: 12px;
+}
+
+.alert-dimension-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.alert-dimension-grid .subsection {
+  min-width: 0;
+}
+
 .subsection,
 .config-group {
   padding: 18px;
@@ -1640,6 +1725,7 @@ button.log-pill:hover {
   .skills-layout,
   .trend-grid,
   .chart-grid,
+  .alert-dimension-grid,
   .analysis-config-layout {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1696,11 +1782,16 @@ button.log-pill:hover {
   .pattern-list,
   .trend-grid,
   .chart-grid,
+  .alert-dimension-grid,
   .form-grid,
   .two-column,
   .analysis-config-layout,
   .analysis-config-section .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .insight-section-head {
+    display: grid;
   }
 
   .timeline-item {
