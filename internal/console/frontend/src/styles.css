@@ -1301,6 +1301,132 @@ button.log-pill:hover {
   min-width: 0;
 }
 
+.insight-briefing {
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border-left: 3px solid #2f6f55;
+  color: #31443b;
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.65;
+}
+
+.insight-lesson-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.insight-lesson {
+  padding: 14px 16px;
+  border: 1px solid #d9e3dc;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.insight-lesson span {
+  color: #6a7b72;
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.insight-lesson h4 {
+  margin: 6px 0 8px;
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.insight-lesson p {
+  margin: 0;
+  color: #3b4a43;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.insight-block {
+  margin: 4px 0 16px;
+}
+
+.insight-mode-list,
+.insight-split {
+  display: grid;
+  gap: 12px;
+}
+
+.insight-split {
+  grid-template-columns: 1.1fr 0.9fr;
+}
+
+.insight-mode,
+.insight-blind-list article,
+.insight-playbook li {
+  padding: 14px 16px;
+  border: 1px solid #e2e6e2;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.insight-mode header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.insight-mode header span,
+.insight-playbook span,
+.insight-blind-list span {
+  color: #738078;
+  font-size: 12px;
+}
+
+.insight-mode p,
+.insight-blind-list p {
+  margin: 0 0 8px;
+  line-height: 1.55;
+}
+
+.insight-aside {
+  color: #4d5c54 !important;
+}
+
+.insight-playbook {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: playbook;
+}
+
+.insight-playbook li {
+  display: grid;
+  gap: 4px;
+  counter-increment: playbook;
+}
+
+.insight-playbook li strong::before {
+  margin-right: 8px;
+  color: #2f6f55;
+  content: counter(playbook) ".";
+}
+
+.insight-blind-list {
+  display: grid;
+  gap: 10px;
+}
+
+@media (max-width: 1100px) {
+  .insight-lesson-list,
+  .insight-split {
+    grid-template-columns: 1fr;
+  }
+}
+
 .subsection,
 .config-group {
   padding: 18px;

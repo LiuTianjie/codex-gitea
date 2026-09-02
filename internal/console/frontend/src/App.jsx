@@ -1351,6 +1351,10 @@ function alertInsightLabel(value) {
 
 function AlertAnalysisInsights({ alerts, trend = [], interval = 'day' }) {
   const total = alerts.total || 0
+  const lessons = alerts.lessons || []
+  const failureModes = alerts.failure_modes || []
+  const playbook = alerts.playbook || []
+  const blindSpots = alerts.blind_spots || []
   const classificationChart = Object.entries(alerts.by_classification || {})
     .map(([label, value]) => ({ label: alertInsightLabel(label), value }))
     .sort((a, b) => b.value - a.value)
@@ -1378,15 +1382,96 @@ function AlertAnalysisInsights({ alerts, trend = [], interval = 'day' }) {
     <section className="alert-insights">
       <div className="insight-section-head">
         <div>
-          <span>Alert intelligence</span>
-          <h3>历史告警洞察</h3>
-          <p>基于告警原始字段与已完成分析结论聚合；评估严重度不等同于来源告警等级。</p>
+          <span>Alert experience</span>
+          <h3>历史告警经验</h3>
+          <p>从已完成的告警分析里提炼可复用结论，类似项目 Skill：看的是模式、处置习惯和证据缺口，而不是再数一遍条数。</p>
         </div>
         <strong>{total}<small> 条历史告警</small></strong>
       </div>
 
-      {!total ? <div className="empty-state compact">产生告警分析记录后，这里会展示问题类型、严重度、来源与重复模式。</div> : (
+      {!total ? <div className="empty-state compact">产生告警分析记录后，这里会沉淀通用结论、复发模式和处置经验。</div> : (
         <>
+          {alerts.briefing ? <p className="insight-briefing">{alerts.briefing}</p> : null}
+
+          {lessons.length ? (
+            <div className="insight-lesson-list">
+              {lessons.map((lesson) => (
+                <article className={`insight-lesson kind-${lesson.kind || 'general'}`} key={`${lesson.kind}-${lesson.title}`}>
+                  <span>{lesson.kind || 'lesson'}{lesson.count ? ` · ${lesson.count}` : ''}</span>
+                  <h4>{lesson.title}</h4>
+                  <p>{lesson.body}</p>
+                </article>
+              ))}
+            </div>
+          ) : <div className="empty-state compact">成功分析还不够多，暂时无法沉淀出可复用经验。</div>}
+
+          {failureModes.length ? (
+            <section className="insight-block">
+              <div className="subsection-title">
+                <div>
+                  <h3>复发模式</h3>
+                  <span>同一指纹被反复分析后，留下的通用结论</span>
+                </div>
+              </div>
+              <div className="insight-mode-list">
+                {failureModes.map((mode) => (
+                  <article className="insight-mode" key={`${mode.title}-${mode.classification}`}>
+                    <header>
+                      <strong>{mode.title}</strong>
+                      <span>{alertInsightLabel(mode.classification)} · {mode.count} 次触发 · {mode.analyzed} 次分析</span>
+                    </header>
+                    <p>{mode.conclusion}</p>
+                    {mode.why_it_repeats ? <p className="insight-aside">为何反复：{mode.why_it_repeats}</p> : null}
+                    {mode.what_to_do ? <p className="insight-aside">下一步：{mode.what_to_do}</p> : null}
+                    <small>{[...(mode.services || []), ...(mode.endpoints || [])].filter(Boolean).join(' · ')}</small>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {(playbook.length || blindSpots.length) ? (
+            <div className="insight-split">
+              <section className="insight-block">
+                <div className="subsection-title">
+                  <div>
+                    <h3>处置手册</h3>
+                    <span>历史结论里反复出现的下一步</span>
+                  </div>
+                </div>
+                {playbook.length ? (
+                  <ol className="insight-playbook">
+                    {playbook.map((item) => (
+                      <li key={item.action}>
+                        <strong>{item.action}</strong>
+                        <span>{item.count} 次{item.where?.length ? ` · ${item.where.join(' / ')}` : ''}</span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : <div className="empty-state compact">还没有重复出现的处置建议。</div>}
+              </section>
+              <section className="insight-block">
+                <div className="subsection-title">
+                  <div>
+                    <h3>系统性盲区</h3>
+                    <span>分析时反复缺的证据</span>
+                  </div>
+                </div>
+                {blindSpots.length ? (
+                  <div className="insight-blind-list">
+                    {blindSpots.map((item) => (
+                      <article key={item.gap}>
+                        <strong>{item.gap}</strong>
+                        <span>{item.count} 次</span>
+                        <p>{item.implication}</p>
+                      </article>
+                    ))}
+                  </div>
+                ) : <div className="empty-state compact">还没有重复出现的证据缺口。</div>}
+              </section>
+            </div>
+          ) : null}
+
           <div className="stats-grid alert-stats-grid">
             <StatCard label="分析成功率" value={percent(alerts.analysis_success_rate || 0)} hint={`${alerts.analyzed || 0} 成功 · ${alerts.failed || 0} 失败`} />
             <StatCard label="重复抑制率" value={percent(alerts.suppression_rate || 0)} hint={`${alerts.suppressed || 0} 条未重复分析`} />

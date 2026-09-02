@@ -439,6 +439,44 @@ type AlertAnalysisSummary struct {
 	TopErrorCodes       []AlertDimensionSummary `json:"top_error_codes"`
 	RecurringAlerts     []RecurringAlertSummary `json:"recurring_alerts"`
 	RecentSevere        []SevereAlertSummary    `json:"recent_severe"`
+	Briefing            string                  `json:"briefing,omitempty"`
+	Lessons             []AlertLesson           `json:"lessons,omitempty"`
+	FailureModes        []AlertFailureMode      `json:"failure_modes,omitempty"`
+	Playbook            []AlertPlaybookItem     `json:"playbook,omitempty"`
+	BlindSpots          []AlertBlindSpot        `json:"blind_spots,omitempty"`
+}
+
+type AlertLesson struct {
+	Title          string `json:"title"`
+	Body           string `json:"body"`
+	Kind           string `json:"kind"`
+	Count          int    `json:"count"`
+	Classification string `json:"classification,omitempty"`
+}
+
+type AlertFailureMode struct {
+	Title          string   `json:"title"`
+	Classification string   `json:"classification"`
+	Severity       string   `json:"severity,omitempty"`
+	Count          int      `json:"count"`
+	Analyzed       int      `json:"analyzed"`
+	Services       []string `json:"services,omitempty"`
+	Endpoints      []string `json:"endpoints,omitempty"`
+	Conclusion     string   `json:"conclusion"`
+	WhyItRepeats   string   `json:"why_it_repeats,omitempty"`
+	WhatToDo       string   `json:"what_to_do,omitempty"`
+}
+
+type AlertPlaybookItem struct {
+	Action string   `json:"action"`
+	Count  int      `json:"count"`
+	Where  []string `json:"where,omitempty"`
+}
+
+type AlertBlindSpot struct {
+	Gap         string `json:"gap"`
+	Count       int    `json:"count"`
+	Implication string `json:"implication"`
 }
 
 type AlertDimensionSummary struct {

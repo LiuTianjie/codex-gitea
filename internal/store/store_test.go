@@ -1306,10 +1306,11 @@ func TestBuildAnalysisSummaryIncludesHistoricalAlertInsights(t *testing.T) {
 			t.Fatalf("insert alert task %s: %v", delivery, err)
 		}
 	}
-	alert := `{"environment":"PROD","service":"serverx","title":"订单接口异常","method":"POST","endpoint":"/api/orders","error_code":"500"}`
-	result := `{"classification":"code_regression","confidence":"high","assessed_severity":"high","summary":"订单接口发生回归"}`
+	alert := `{"environment":"PROD","service":"serverx","title":"订单接口异常","method":"POST","endpoint":"/api/orders","error_code":"500","severity":"critical"}`
+	result := `{"classification":"code_regression","confidence":"high","assessed_severity":"high","summary":"订单接口发生回归","hypotheses":["最近改动影响了下单校验"],"evidence_gaps":["未提供 deployment_sha"],"recommended_actions":["核对最近订单相关提交与部署版本"]}`
 	insert("alert-1", "orders-500", "succeeded", alert, result, "2026-06-19T01:00:00Z")
 	insert("alert-2", "orders-500", "suppressed", alert, ``, "2026-06-19T01:01:00Z")
+	insert("alert-4", "orders-500", "succeeded", alert, result, "2026-06-19T01:02:00Z")
 	insert("alert-3", "cache-timeout", "failed", `{"environment":"staging","service":"worker","method":"RUN","endpoint":"cache-sync","error_code":"TIMEOUT"}`, ``, "2026-06-20T01:00:00Z")
 
 	summary, err := st.BuildAnalysisSummary(ctx)
@@ -1317,22 +1318,34 @@ func TestBuildAnalysisSummaryIncludesHistoricalAlertInsights(t *testing.T) {
 		t.Fatalf("BuildAnalysisSummary: %v", err)
 	}
 	alerts := summary.Alerts
-	if alerts.Total != 3 || alerts.Analyzed != 1 || alerts.Failed != 1 || alerts.Suppressed != 1 {
+	if alerts.Total != 4 || alerts.Analyzed != 2 || alerts.Failed != 1 || alerts.Suppressed != 1 {
 		t.Fatalf("alert lifecycle mismatch: %+v", alerts)
 	}
-	if alerts.AnalysisSuccessRate != 0.5 || alerts.SuppressionRate != float64(1)/3 || alerts.HighCritical != 1 {
+	if alerts.AnalysisSuccessRate != float64(2)/3 || alerts.SuppressionRate != 0.25 || alerts.HighCritical != 2 {
 		t.Fatalf("alert rates mismatch: %+v", alerts)
 	}
-	if alerts.ByClassification["code_regression"] != 1 || alerts.BySeverity["high"] != 1 || alerts.ByConfidence["high"] != 1 || alerts.ByEnvironment["prod"] != 2 {
+	if alerts.ByClassification["code_regression"] != 2 || alerts.BySeverity["high"] != 2 || alerts.ByConfidence["high"] != 2 || alerts.ByEnvironment["prod"] != 3 {
 		t.Fatalf("alert dimensions mismatch: %+v", alerts)
 	}
-	if len(alerts.TopServices) != 2 || alerts.TopServices[0].Label != "serverx" || alerts.TopServices[0].Count != 2 {
+	if len(alerts.TopServices) != 2 || alerts.TopServices[0].Label != "serverx" || alerts.TopServices[0].Count != 3 {
 		t.Fatalf("top services mismatch: %+v", alerts.TopServices)
 	}
-	if len(alerts.RecurringAlerts) != 1 || alerts.RecurringAlerts[0].Count != 2 || alerts.RecurringAlerts[0].Title != "订单接口异常" {
+	if len(alerts.RecurringAlerts) != 1 || alerts.RecurringAlerts[0].Count != 3 || alerts.RecurringAlerts[0].Title != "订单接口异常" {
 		t.Fatalf("recurring alerts mismatch: %+v", alerts.RecurringAlerts)
 	}
-	if len(alerts.RecentSevere) != 1 || alerts.RecentSevere[0].TaskID == 0 || alerts.RecentSevere[0].Classification != "code_regression" {
+	if alerts.Briefing == "" || len(alerts.Lessons) == 0 || len(alerts.FailureModes) != 1 {
+		t.Fatalf("alert insight briefing mismatch: briefing=%q lessons=%+v modes=%+v", alerts.Briefing, alerts.Lessons, alerts.FailureModes)
+	}
+	if alerts.FailureModes[0].Conclusion != "订单接口发生回归" || alerts.FailureModes[0].WhatToDo == "" {
+		t.Fatalf("failure mode mismatch: %+v", alerts.FailureModes[0])
+	}
+	if len(alerts.Playbook) != 1 || alerts.Playbook[0].Count != 2 {
+		t.Fatalf("playbook mismatch: %+v", alerts.Playbook)
+	}
+	if len(alerts.BlindSpots) != 1 || alerts.BlindSpots[0].Count != 2 {
+		t.Fatalf("blind spots mismatch: %+v", alerts.BlindSpots)
+	}
+	if len(alerts.RecentSevere) != 2 || alerts.RecentSevere[0].Classification != "code_regression" {
 		t.Fatalf("recent severe alerts mismatch: %+v", alerts.RecentSevere)
 	}
 
@@ -1340,7 +1353,7 @@ func TestBuildAnalysisSummaryIncludesHistoricalAlertInsights(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildAnalysisTrend: %v", err)
 	}
-	if len(points) != 2 || points[0].Bucket != "2026-06-19" || points[0].TotalAlerts != 2 || points[0].AnalyzedAlerts != 1 || points[0].SuppressedAlerts != 1 {
+	if len(points) != 2 || points[0].Bucket != "2026-06-19" || points[0].TotalAlerts != 3 || points[0].AnalyzedAlerts != 2 || points[0].SuppressedAlerts != 1 {
 		t.Fatalf("first alert trend mismatch: %+v", points)
 	}
 	if points[1].Bucket != "2026-06-20" || points[1].TotalAlerts != 1 || points[1].FailedAlerts != 1 {
