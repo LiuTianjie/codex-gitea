@@ -11,6 +11,9 @@ import (
 	"github.com/turning4th/codex-gitea/internal/model"
 )
 
+// AnalysisRevision is always fetched afresh for each alert analysis.
+const AnalysisRevision = "refs/heads/main"
+
 type RevisionCache interface {
 	PrepareRevision(context.Context, string, string, int64) (string, string, error)
 	CleanupRevision(string, int64) error
@@ -36,7 +39,7 @@ func TestRepository(ctx context.Context, cache RevisionCache, cfg model.Analysis
 		return errors.New("repository cache is not configured")
 	}
 	const testTaskID int64 = 0
-	_, _, err := cache.PrepareRevision(ctx, cfg.RepositoryURL, cfg.RepositoryRef, testTaskID)
+	_, _, err := cache.PrepareRevision(ctx, cfg.RepositoryURL, AnalysisRevision, testTaskID)
 	if err != nil {
 		return err
 	}
@@ -63,10 +66,7 @@ func (p *Processor) Process(ctx context.Context, task *model.AnalysisTask) (stri
 	logData, _ := json.Marshal(map[string]any{"count": len(logs)})
 	p.phase(ctx, *cfg, task, "logs_ready", fmt.Sprintf("已获取 %d 条原始日志", len(logs)), logData)
 
-	revision := strings.TrimSpace(task.Alert.DeploymentSHA)
-	if revision == "" {
-		revision = cfg.RepositoryRef
-	}
+	revision := AnalysisRevision
 	if err := p.setPhase(ctx, task.ID, "preparing_repository", "正在准备只读代码版本 "+revision); err != nil {
 		return "", err
 	}
@@ -86,7 +86,7 @@ func (p *Processor) Process(ctx context.Context, task *model.AnalysisTask) (stri
 		return "", err
 	}
 	p.phase(ctx, *cfg, task, "analyzing", "Codex 正在综合日志与 Git 证据", nil)
-	prompt := BuildPrompt(task.Alert, logs, gitFacts, resolvedSHA, task.Alert.DeploymentSHA != "", cfg.Prompt)
+	prompt := BuildPrompt(task.Alert, logs, gitFacts, resolvedSHA, cfg.Prompt)
 	if p.Analyze == nil {
 		return "", errors.New("incident analyzer is not configured")
 	}
@@ -97,9 +97,6 @@ func (p *Processor) Process(ctx context.Context, task *model.AnalysisTask) (stri
 	result, err := parseAnalysisResult(raw)
 	if err != nil {
 		return "", err
-	}
-	if task.Alert.DeploymentSHA == "" {
-		result.EvidenceGaps = appendUnique(result.EvidenceGaps, "未提供 deployment_sha；提交判断基于配置分支当前版本，未确认与告警发生时线上版本完全一致")
 	}
 	if len(logs) == 0 {
 		result.EvidenceGaps = appendUnique(result.EvidenceGaps, "SLS 查询未返回匹配的原始日志")

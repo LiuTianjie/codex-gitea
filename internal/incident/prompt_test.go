@@ -8,7 +8,7 @@ import (
 )
 
 func TestBuildPromptRequiresChineseHumanReadableOutput(t *testing.T) {
-	prompt := BuildPrompt(model.AlertEnvelope{}, nil, "", "abc123", false, "")
+	prompt := BuildPrompt(model.AlertEnvelope{}, nil, "", "abc123", "")
 	for _, want := range []string{
 		"所有面向人的内容必须使用简体中文",
 		"除固定枚举和技术标识符外，所有字符串内容必须使用简体中文",
@@ -17,6 +17,20 @@ func TestBuildPromptRequiresChineseHumanReadableOutput(t *testing.T) {
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt does not contain %q", want)
+		}
+	}
+}
+
+func TestBuildPromptUsesLatestMainWithoutDeploymentGap(t *testing.T) {
+	for _, sha := range []string{"", "old-deployment"} {
+		prompt := BuildPrompt(model.AlertEnvelope{DeploymentSHA: sha}, nil, "", "current-main", "")
+		for _, want := range []string{"本次分析开始时从远端拉取的最新 main", "不要仅因未提供 deployment_sha", "明显矛盾时", "当前检出 SHA：current-main"} {
+			if !strings.Contains(prompt, want) {
+				t.Fatalf("missing %q", want)
+			}
+		}
+		if strings.Contains(prompt, "当前检出版本来自告警中的 deployment_sha") {
+			t.Fatal("incorrect deployment claim")
 		}
 	}
 }

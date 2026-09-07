@@ -264,7 +264,12 @@ Usage instruction format:
 ### Alert analysis
 
 The **Alert configs** tab creates independent, database-backed configurations.
-Each configuration includes a repository URL/ref, SLS endpoint/project and one
+Each analysis fetches the latest remote `main` branch, regardless of the legacy
+`repository_ref` setting or an alert’s `deployment_sha`. Repository connection
+tests use the same branch. The resolved SHA is retained in task events and code
+evidence. Missing deployment metadata is not itself an evidence gap; version
+verification is requested only when logs visibly contradict the current code.
+Each configuration includes a repository URL, SLS endpoint/project and one
 or more comma-separated logstores and credentials, one of two Feishu delivery
 modes, optional model/prompt overrides, and a duplicate-alert throttle. App-bot
 mode stores an App ID, encrypted App Secret, and target Chat ID; webhook mode
@@ -318,7 +323,7 @@ is:
   "trace_id": "trace-id-if-available",
   "error_code": "500",
   "error_message": "short error text",
-  "deployment_sha": "optional-production-git-sha",
+  "deployment_sha": "optional-historical-context-only",
   "detail_url": "optional-alert-detail-url"
 }
 ```

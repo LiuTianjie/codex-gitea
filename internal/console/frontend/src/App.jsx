@@ -846,7 +846,7 @@ function AnalysisConfigsPanel() {
       {ingestURL ? <div className="ingest-banner"><code>{ingestURL}</code><IconButton icon={Copy} onClick={() => navigator.clipboard.writeText(ingestURL)}>复制地址</IconButton></div> : null}
       <div className="analysis-config-layout">
         <aside className="analysis-config-list">
-          {configs.map((config) => <button key={config.id} className={selectedId === config.id ? 'active' : ''} type="button" onClick={() => selectConfig(config)}><strong>{config.name}</strong><span>{config.repository_ref} · {config.sls_logstore}</span><StatusBadge status={config.enabled ? 'enabled' : 'disabled'} /></button>)}
+          {configs.map((config) => <button key={config.id} className={selectedId === config.id ? 'active' : ''} type="button" onClick={() => selectConfig(config)}><strong>{config.name}</strong><span>main · {config.sls_logstore}</span><StatusBadge status={config.enabled ? 'enabled' : 'disabled'} /></button>)}
           {!configs.length ? <div className="empty-state compact">还没有告警配置</div> : null}
         </aside>
         <div className="analysis-config-form">
@@ -854,7 +854,7 @@ function AnalysisConfigsPanel() {
           <ConfigSection title="基本与仓库">
             <AnalysisField label="配置名称" value={form.name} onChange={(v) => setField('name', v)} />
             <AnalysisField label="仓库 Clone URL" value={form.repository_url} onChange={(v) => setField('repository_url', v)} />
-            <AnalysisField label="目标分支 / SHA" value={form.repository_ref} onChange={(v) => setField('repository_ref', v)} />
+            <div className="field"><span>分析分支</span><p>固定使用远端最新 main，每次分析重新拉取。</p></div>
           </ConfigSection>
           <ConfigSection title="阿里云 SLS">
             <AnalysisField label="Endpoint" value={form.sls_endpoint} onChange={(v) => setField('sls_endpoint', v)} />
