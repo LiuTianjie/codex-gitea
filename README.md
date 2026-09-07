@@ -264,10 +264,12 @@ Usage instruction format:
 ### Alert analysis
 
 The **Alert configs** tab creates independent, database-backed configurations.
-Each analysis fetches the latest remote `main` branch, regardless of the legacy
-`repository_ref` setting or an alert’s `deployment_sha`. Repository connection
-tests use the same branch. The resolved SHA is retained in task events and code
-evidence. Missing deployment metadata is not itself an evidence gap; version
+Each configuration selects its own analysis branch/ref through `repository_ref`
+(default `main`): for example, `dev` for test and `main` for production. Each
+analysis fetches that ref again, using the latest commit for a branch or the
+specified commit for a fixed SHA. An alert’s `deployment_sha` does not override
+this choice. Repository connection tests use the same configured ref. The
+resolved SHA is retained in task events and code evidence. Missing deployment metadata is not itself an evidence gap; version
 verification is requested only when logs visibly contradict the current code.
 Each configuration includes a repository URL, SLS endpoint/project and one
 or more comma-separated logstores and credentials, one of two Feishu delivery

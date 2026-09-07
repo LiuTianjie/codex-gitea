@@ -11,8 +11,14 @@ import (
 	"github.com/turning4th/codex-gitea/internal/model"
 )
 
-// AnalysisRevision is always fetched afresh for each alert analysis.
-const AnalysisRevision = "refs/heads/main"
+// analysisRevision preserves each environment's configured ref. Empty configs
+// default to main; incoming deployment metadata never overrides this choice.
+func analysisRevision(cfg model.AnalysisConfig) string {
+	if ref := strings.TrimSpace(cfg.RepositoryRef); ref != "" {
+		return ref
+	}
+	return "main"
+}
 
 type RevisionCache interface {
 	PrepareRevision(context.Context, string, string, int64) (string, string, error)
@@ -39,7 +45,7 @@ func TestRepository(ctx context.Context, cache RevisionCache, cfg model.Analysis
 		return errors.New("repository cache is not configured")
 	}
 	const testTaskID int64 = 0
-	_, _, err := cache.PrepareRevision(ctx, cfg.RepositoryURL, AnalysisRevision, testTaskID)
+	_, _, err := cache.PrepareRevision(ctx, cfg.RepositoryURL, analysisRevision(cfg), testTaskID)
 	if err != nil {
 		return err
 	}
@@ -66,7 +72,7 @@ func (p *Processor) Process(ctx context.Context, task *model.AnalysisTask) (stri
 	logData, _ := json.Marshal(map[string]any{"count": len(logs)})
 	p.phase(ctx, *cfg, task, "logs_ready", fmt.Sprintf("已获取 %d 条原始日志", len(logs)), logData)
 
-	revision := AnalysisRevision
+	revision := analysisRevision(*cfg)
 	if err := p.setPhase(ctx, task.ID, "preparing_repository", "正在准备只读代码版本 "+revision); err != nil {
 		return "", err
 	}
@@ -86,7 +92,7 @@ func (p *Processor) Process(ctx context.Context, task *model.AnalysisTask) (stri
 		return "", err
 	}
 	p.phase(ctx, *cfg, task, "analyzing", "Codex 正在综合日志与 Git 证据", nil)
-	prompt := BuildPrompt(task.Alert, logs, gitFacts, resolvedSHA, cfg.Prompt)
+	prompt := BuildPrompt(task.Alert, logs, gitFacts, revision, resolvedSHA, cfg.Prompt)
 	if p.Analyze == nil {
 		return "", errors.New("incident analyzer is not configured")
 	}
